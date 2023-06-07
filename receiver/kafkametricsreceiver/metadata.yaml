@@ -18,7 +18,7 @@ attributes:
     type: string
 
 metrics:
-#  brokers scraper
+  #  brokers scraper
   kafka.brokers:
     enabled: true
     description: Number of brokers in the cluster.
@@ -27,15 +27,13 @@ metrics:
       monotonic: false
       value_type: int
       aggregation: delta
-#  topics scraper
+  #  topics scraper
   kafka.topic.partitions:
     enabled: true
     description: Number of partitions in topic.
     unit: "{partitions}"
-    sum:
-      monotonic: false
+    gauge:
       value_type: int
-      aggregation: delta
     attributes: [topic]
   kafka.partition.current_offset:
     enabled: true
@@ -62,20 +60,16 @@ metrics:
     enabled: true
     description: Number of synchronized replicas of partition
     unit: "{replicas}"
-    sum:
-      monotonic: false
+    gauge:
       value_type: int
-      aggregation: delta
     attributes: [topic, partition]
-#  consumers scraper
+  #  consumers scraper
   kafka.consumer_group.members:
     enabled: true
     description: Count of members in the consumer group
     unit: "{members}"
-    sum:
-      monotonic: false
+    gauge:
       value_type: int
-      aggregation: delta
     attributes: [group]
   kafka.consumer_group.offset:
     enabled: true

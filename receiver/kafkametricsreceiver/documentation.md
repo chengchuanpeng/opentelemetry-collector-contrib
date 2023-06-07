@@ -55,9 +55,9 @@ Current approximate sum of consumer group lag across all partitions of topic
 
 Count of members in the consumer group
 
-| Unit | Metric Type | Value Type | Aggregation Temporality | Monotonic |
-| ---- | ----------- | ---------- | ----------------------- | --------- |
-| {members} | Sum | Int | Delta | false |
+| Unit | Metric Type | Value Type |
+| ---- | ----------- | ---------- |
+| {members} | Gauge | Int |
 
 #### Attributes
 
@@ -145,9 +145,9 @@ Number of replicas for partition of topic
 
 Number of synchronized replicas of partition
 
-| Unit | Metric Type | Value Type | Aggregation Temporality | Monotonic |
-| ---- | ----------- | ---------- | ----------------------- | --------- |
-| {replicas} | Sum | Int | Delta | false |
+| Unit | Metric Type | Value Type |
+| ---- | ----------- | ---------- |
+| {replicas} | Gauge | Int |
 
 #### Attributes
 
@@ -160,9 +160,9 @@ Number of synchronized replicas of partition
 
 Number of partitions in topic.
 
-| Unit | Metric Type | Value Type | Aggregation Temporality | Monotonic |
-| ---- | ----------- | ---------- | ----------------------- | --------- |
-| {partitions} | Sum | Int | Delta | false |
+| Unit | Metric Type | Value Type |
+| ---- | ----------- | ---------- |
+| {partitions} | Gauge | Int |
 
 #### Attributes
 
