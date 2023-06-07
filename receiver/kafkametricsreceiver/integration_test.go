@@ -77,5 +77,3 @@ func TestIntegration(t *testing.T) {
 		),
 	).Run(t)
 }
-
-// expected file
