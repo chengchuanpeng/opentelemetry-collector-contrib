@@ -27,13 +27,14 @@ const (
 	bootTime     = 100
 )
 
-// Skips test without applying unused rule
-var skip = func(t *testing.T, why string) {
-	t.Skip(why)
-}
+//
+//// Skips test without applying unused rule
+//var skip = func(t *testing.T, why string) {
+//	t.Skip(why)
+//}
 
 func TestScrape(t *testing.T) {
-	skip(t, "Flaky test. See https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/10030")
+	//skip(t, "Flaky test. See https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/10030")
 	type testCase struct {
 		name         string
 		bootTimeFunc func() (uint64, error)
