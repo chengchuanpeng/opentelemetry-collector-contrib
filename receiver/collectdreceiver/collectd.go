@@ -6,6 +6,8 @@ package collectdreceiver // import "github.com/open-telemetry/opentelemetry-coll
 import (
 	"encoding/json"
 	"fmt"
+	"go.opentelemetry.io/collector/pdata/pcommon"
+	"go.opentelemetry.io/collector/pdata/pmetric"
 	"strings"
 	"time"
 
@@ -42,12 +44,13 @@ func (r *collectDRecord) isEvent() bool {
 	return r.Time != nil && r.Severity != nil && r.Message != nil
 }
 
-func (r *collectDRecord) protoTime() *timestamppb.Timestamp {
+func (r *collectDRecord) protoTime() pcommon.Timestamp {
 	if r.Time == nil {
-		return nil
+		ts := time.Time{}
+		return pcommon.NewTimestampFromTime(ts)
 	}
 	ts := time.Unix(0, int64(float64(time.Second)**r.Time))
-	return timestamppb.New(ts)
+	return pcommon.NewTimestampFromTime(ts)
 }
 
 func (r *collectDRecord) startTimestamp(mdType metricspb.MetricDescriptor_Type) *timestamppb.Timestamp {
@@ -100,6 +103,9 @@ func (r *collectDRecord) newMetric(name string, dsType *string, val *json.Number
 		return metric, fmt.Errorf("error processing metric %s: %w", name, err)
 	}
 
+	//todo
+	// refer  https://github.com/open-telemetry/opentelemetry-collector-contrib/commit/5ba5059a68d59db9a960dcae4c79e6b5d29b1baa
+	// there is attributes and lvalues
 	lKeys, lValues := labelKeysAndValues(labels)
 	metricType := r.metricType(dsType, isDouble)
 	metric.MetricDescriptor = &metricspb.MetricDescriptor{
@@ -136,23 +142,23 @@ func (r *collectDRecord) metricType(dsType *string, isDouble bool) metricspb.Met
 	return metricGauge(isDouble)
 }
 
-func (r *collectDRecord) newPoint(val *json.Number) (*metricspb.Point, bool, error) {
-	p := &metricspb.Point{
-		Timestamp: r.protoTime(),
-	}
+func (r *collectDRecord) newPoint(val *json.Number) (pmetric.Metric, bool, error) {
 
+	metric := pmetric.NewMetric()
+	dp := metric.SetEmptyGauge().DataPoints().AppendEmpty()
+	dp.SetTimestamp(r.protoTime())
 	isDouble := true
 	if v, err := val.Int64(); err == nil {
 		isDouble = false
-		p.Value = &metricspb.Point_Int64Value{Int64Value: v}
+		dp.SetIntValue(v)
 	} else {
 		v, err := val.Float64()
 		if err != nil {
-			return nil, isDouble, fmt.Errorf("value could not be decoded: %w", err)
+			return pmetric.Metric{}, isDouble, fmt.Errorf("value could not be decoded: %w", err)
 		}
-		p.Value = &metricspb.Point_DoubleValue{DoubleValue: v}
+		dp.SetDoubleValue(v)
 	}
-	return p, isDouble, nil
+	return metric, isDouble, nil
 }
 
 // getReasonableMetricName creates metrics names by joining them (if non empty) type.typeinstance
