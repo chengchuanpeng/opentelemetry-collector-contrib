@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package googlecloudpubsubexporter // import "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/googlecloudpubsubexporter"
 
@@ -78,36 +67,36 @@ func traverseMetrics(metrics pmetric.Metrics, collect collectFunc) {
 			l := r.ScopeMetrics().At(lix)
 			for dix := 0; dix < l.Metrics().Len(); dix++ {
 				d := l.Metrics().At(dix)
-				switch d.DataType() {
-				case pmetric.MetricDataTypeHistogram:
+				switch d.Type() {
+				case pmetric.MetricTypeHistogram:
 					for pix := 0; pix < d.Histogram().DataPoints().Len(); pix++ {
 						p := d.Histogram().DataPoints().At(pix)
 						if collect(p.Timestamp()) {
 							return
 						}
 					}
-				case pmetric.MetricDataTypeExponentialHistogram:
+				case pmetric.MetricTypeExponentialHistogram:
 					for pix := 0; pix < d.ExponentialHistogram().DataPoints().Len(); pix++ {
 						p := d.ExponentialHistogram().DataPoints().At(pix)
 						if collect(p.Timestamp()) {
 							return
 						}
 					}
-				case pmetric.MetricDataTypeSum:
+				case pmetric.MetricTypeSum:
 					for pix := 0; pix < d.Sum().DataPoints().Len(); pix++ {
 						p := d.Sum().DataPoints().At(pix)
 						if collect(p.Timestamp()) {
 							return
 						}
 					}
-				case pmetric.MetricDataTypeGauge:
+				case pmetric.MetricTypeGauge:
 					for pix := 0; pix < d.Gauge().DataPoints().Len(); pix++ {
 						p := d.Gauge().DataPoints().At(pix)
 						if collect(p.Timestamp()) {
 							return
 						}
 					}
-				case pmetric.MetricDataTypeSummary:
+				case pmetric.MetricTypeSummary:
 					for pix := 0; pix < d.Summary().DataPoints().Len(); pix++ {
 						p := d.Summary().DataPoints().At(pix)
 						if collect(p.Timestamp()) {

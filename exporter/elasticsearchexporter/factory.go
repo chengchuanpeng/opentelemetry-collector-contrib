@@ -1,16 +1,7 @@
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
+
+//go:generate mdatagen metadata.yaml
 
 package elasticsearchexporter // import "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/elasticsearchexporter"
 
@@ -20,31 +11,39 @@ import (
 	"time"
 
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config"
+	"go.opentelemetry.io/collector/exporter"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/elasticsearchexporter/internal/metadata"
 )
 
 const (
 	// The value of "type" key in configuration.
-	typeStr = "elasticsearch"
+	defaultLogsIndex   = "logs-generic-default"
+	defaultTracesIndex = "traces-generic-default"
 )
 
 // NewFactory creates a factory for Elastic exporter.
-func NewFactory() component.ExporterFactory {
-	return component.NewExporterFactory(
-		typeStr,
+func NewFactory() exporter.Factory {
+	return exporter.NewFactory(
+		metadata.Type,
 		createDefaultConfig,
-		component.WithLogsExporter(createLogsExporter),
+		exporter.WithLogs(createLogsExporter, metadata.LogsStability),
+		exporter.WithTraces(createTracesExporter, metadata.TracesStability),
 	)
 }
 
-func createDefaultConfig() config.Exporter {
+func createDefaultConfig() component.Config {
+	qs := exporterhelper.NewDefaultQueueSettings()
+	qs.Enabled = false
 	return &Config{
-		ExporterSettings: config.NewExporterSettings(config.NewComponentID(typeStr)),
+		QueueSettings: qs,
 		HTTPClientSettings: HTTPClientSettings{
 			Timeout: 90 * time.Second,
 		},
-		Index: "logs-generic-default",
+		Index:       "",
+		LogsIndex:   defaultLogsIndex,
+		TracesIndex: defaultTracesIndex,
 		Retry: RetrySettings{
 			Enabled:         true,
 			MaxRequests:     3,
@@ -64,18 +63,43 @@ func createDefaultConfig() config.Exporter {
 // Logs are directly indexed into Elasticsearch.
 func createLogsExporter(
 	ctx context.Context,
-	set component.ExporterCreateSettings,
-	cfg config.Exporter,
-) (component.LogsExporter, error) {
-	exporter, err := newExporter(set.Logger, cfg.(*Config))
+	set exporter.CreateSettings,
+	cfg component.Config,
+) (exporter.Logs, error) {
+	cf := cfg.(*Config)
+	if cf.Index != "" {
+		set.Logger.Warn("index option are deprecated and replaced with logs_index and traces_index.")
+	}
+
+	exporter, err := newLogsExporter(set.Logger, cf)
 	if err != nil {
 		return nil, fmt.Errorf("cannot configure Elasticsearch logs exporter: %w", err)
 	}
 
 	return exporterhelper.NewLogsExporter(
-		cfg,
+		ctx,
 		set,
+		cfg,
 		exporter.pushLogsData,
 		exporterhelper.WithShutdown(exporter.Shutdown),
+		exporterhelper.WithQueue(cf.QueueSettings),
 	)
+}
+
+func createTracesExporter(ctx context.Context,
+	set exporter.CreateSettings,
+	cfg component.Config) (exporter.Traces, error) {
+
+	cf := cfg.(*Config)
+	exporter, err := newTracesExporter(set.Logger, cf)
+	if err != nil {
+		return nil, fmt.Errorf("cannot configure Elasticsearch traces exporter: %w", err)
+	}
+	return exporterhelper.NewTracesExporter(
+		ctx,
+		set,
+		cfg,
+		exporter.pushTraceData,
+		exporterhelper.WithShutdown(exporter.Shutdown),
+		exporterhelper.WithQueue(cf.QueueSettings))
 }

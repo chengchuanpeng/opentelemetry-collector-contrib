@@ -1,18 +1,6 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
-// nolint:errcheck
 package deltatorateprocessor
 
 import (
@@ -22,11 +10,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/collector/component/componenttest"
-	"go.opentelemetry.io/collector/config"
 	"go.opentelemetry.io/collector/consumer/consumertest"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.opentelemetry.io/collector/processor/processortest"
 )
 
 type testMetric struct {
@@ -129,13 +116,12 @@ func TestCumulativeToDeltaProcessor(t *testing.T) {
 			// next stores the results of the filter metric processor
 			next := new(consumertest.MetricsSink)
 			cfg := &Config{
-				ProcessorSettings: config.NewProcessorSettings(config.NewComponentID(typeStr)),
-				Metrics:           test.metrics,
+				Metrics: test.metrics,
 			}
 			factory := NewFactory()
 			mgp, err := factory.CreateMetricsProcessor(
 				context.Background(),
-				componenttest.NewNopProcessorCreateSettings(),
+				processortest.NewNopCreateSettings(),
 				cfg,
 				next,
 			)
@@ -165,17 +151,17 @@ func TestCumulativeToDeltaProcessor(t *testing.T) {
 
 				require.Equal(t, eM.Name(), aM.Name())
 
-				if eM.DataType() == pmetric.MetricDataTypeGauge {
+				if eM.Type() == pmetric.MetricTypeGauge {
 					eDataPoints := eM.Gauge().DataPoints()
 					aDataPoints := aM.Gauge().DataPoints()
 					require.Equal(t, eDataPoints.Len(), aDataPoints.Len())
 
 					for j := 0; j < eDataPoints.Len(); j++ {
-						require.Equal(t, eDataPoints.At(j).DoubleVal(), aDataPoints.At(j).DoubleVal())
+						require.Equal(t, eDataPoints.At(j).DoubleValue(), aDataPoints.At(j).DoubleValue())
 					}
 				}
 
-				if eM.DataType() == pmetric.MetricDataTypeSum {
+				if eM.Type() == pmetric.MetricTypeSum {
 					eDataPoints := eM.Sum().DataPoints()
 					aDataPoints := aM.Sum().DataPoints()
 
@@ -183,7 +169,7 @@ func TestCumulativeToDeltaProcessor(t *testing.T) {
 					require.Equal(t, eM.Sum().AggregationTemporality(), aM.Sum().AggregationTemporality())
 
 					for j := 0; j < eDataPoints.Len(); j++ {
-						require.Equal(t, eDataPoints.At(j).DoubleVal(), aDataPoints.At(j).DoubleVal())
+						require.Equal(t, eDataPoints.At(j).DoubleValue(), aDataPoints.At(j).DoubleValue())
 					}
 				}
 
@@ -204,15 +190,13 @@ func generateSumMetrics(tm testMetric) pmetric.Metrics {
 	for i, name := range tm.metricNames {
 		m := ms.AppendEmpty()
 		m.SetName(name)
-		m.SetDataType(pmetric.MetricDataTypeSum)
-
-		sum := m.Sum()
+		sum := m.SetEmptySum()
 		sum.SetIsMonotonic(true)
 
 		if tm.isDelta[i] {
-			sum.SetAggregationTemporality(pmetric.MetricAggregationTemporalityDelta)
+			sum.SetAggregationTemporality(pmetric.AggregationTemporalityDelta)
 		} else {
-			sum.SetAggregationTemporality(pmetric.MetricAggregationTemporalityCumulative)
+			sum.SetAggregationTemporality(pmetric.AggregationTemporalityCumulative)
 		}
 
 		if i < len(tm.metricValues) {
@@ -220,7 +204,7 @@ func generateSumMetrics(tm testMetric) pmetric.Metrics {
 				dp := m.Sum().DataPoints().AppendEmpty()
 				dp.SetStartTimestamp(pcommon.NewTimestampFromTime(now))
 				dp.SetTimestamp(pcommon.NewTimestampFromTime(now.Add(delta * time.Second)))
-				dp.SetDoubleVal(value)
+				dp.SetDoubleValue(value)
 			}
 		}
 		if i < len(tm.metricIntValues) {
@@ -228,7 +212,7 @@ func generateSumMetrics(tm testMetric) pmetric.Metrics {
 				dp := m.Sum().DataPoints().AppendEmpty()
 				dp.SetStartTimestamp(pcommon.NewTimestampFromTime(now))
 				dp.SetTimestamp(pcommon.NewTimestampFromTime(now.Add(delta * time.Second)))
-				dp.SetIntVal(value)
+				dp.SetIntValue(value)
 			}
 		}
 	}
@@ -245,19 +229,19 @@ func generateGaugeMetrics(tm testMetric) pmetric.Metrics {
 	for i, name := range tm.metricNames {
 		m := ms.AppendEmpty()
 		m.SetName(name)
-		m.SetDataType(pmetric.MetricDataTypeGauge)
+		dps := m.SetEmptyGauge().DataPoints()
 		if i < len(tm.metricValues) {
 			for _, value := range tm.metricValues[i] {
-				dp := m.Gauge().DataPoints().AppendEmpty()
+				dp := dps.AppendEmpty()
 				dp.SetTimestamp(pcommon.NewTimestampFromTime(now.Add(120 * time.Second)))
-				dp.SetDoubleVal(value)
+				dp.SetDoubleValue(value)
 			}
 		}
 		if i < len(tm.metricIntValues) {
 			for _, value := range tm.metricIntValues[i] {
-				dp := m.Gauge().DataPoints().AppendEmpty()
+				dp := dps.AppendEmpty()
 				dp.SetTimestamp(pcommon.NewTimestampFromTime(now.Add(120 * time.Second)))
-				dp.SetIntVal(value)
+				dp.SetIntValue(value)
 			}
 		}
 	}

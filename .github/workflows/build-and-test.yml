@@ -7,21 +7,26 @@ on:
   pull_request:
 env:
   TEST_RESULTS: testbed/tests/results/junit/results.xml
+  # See: https://github.com/actions/cache/issues/810#issuecomment-1222550359
+  # Cache downloads for this workflow consistently run in under 1 minute
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
+
+# Do not cancel this workflow on main. See https://github.com/open-telemetry/opentelemetry-collector-contrib/pull/16616
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   setup-environment:
+    timeout-minutes: 30
     runs-on: ubuntu-latest
+    if: ${{ github.actor != 'dependabot[bot]' }}
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
-      - name: Setup Go
-        uses: actions/setup-go@v3
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v4
         with:
-          go-version: 1.17
-      - name: Setup Go Environment
-        run: |
-          echo "GOPATH=$(go env GOPATH)" >> $GITHUB_ENV
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+          go-version: 1.19
+          cache: false
       - name: Cache Go
         id: go-cache
         uses: actions/cache@v3
@@ -40,24 +45,41 @@ jobs:
     runs-on: ubuntu-latest
     needs: [setup-environment]
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: Check Collector Module Version
         run: ./.github/workflows/scripts/check-collector-module-version.sh
-  lint:
+  check-codeowners:
     runs-on: ubuntu-latest
     needs: [setup-environment]
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
-      - name: Setup Go
-        uses: actions/setup-go@v3
+      - uses: actions/checkout@v3
+      - name: Check Code Owner Existence
+        run: ./.github/workflows/scripts/check-codeowners.sh check_code_owner_existence
+      - name: Check Component Existence
+        run: ./.github/workflows/scripts/check-codeowners.sh check_component_existence
+      - name: Validate Allowlist entries
+        run: ./.github/workflows/scripts/check-codeowners.sh check_entries_in_allowlist
+  lint-matrix:
+    strategy:
+      matrix:
+        group:
+          - receiver-0
+          - receiver-1
+          - processor
+          - exporter
+          - extension
+          - connector
+          - internal
+          - pkg
+          - other
+    runs-on: ubuntu-latest
+    needs: [setup-environment]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v4
         with:
-          go-version: 1.17
-      - name: Setup Go Environment
-        run: |
-          echo "GOPATH=$(go env GOPATH)" >> $GITHUB_ENV
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+          go-version: "1.20"
+          cache: false
       - name: Cache Go
         id: go-cache
         uses: actions/cache@v3
@@ -66,27 +88,80 @@ jobs:
             ~/go/bin
             ~/go/pkg/mod
           key: go-cache-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+      - name: Install dependencies
+        if: steps.go-cache.outputs.cache-hit != 'true'
+        run: make -j2 gomoddownload
+      - name: Install Tools
+        if: steps.go-cache.outputs.cache-hit != 'true'
+        run: make install-tools
       - name: Cache Lint Build
         uses: actions/cache@v3
         with:
           path: ~/.cache/go-build
-          key: go-lint-build-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          key: go-lint-build-${{ matrix.group }}-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
       - name: Lint
-        run: make -j2 golint
+        run: make -j2 golint GROUP=${{ matrix.group }}
+  lint:
+    if: ${{ github.actor != 'dependabot[bot]' && always() }}
+    runs-on: ubuntu-latest
+    needs: [setup-environment, lint-matrix]
+    steps:
+      - name: Print result
+        run: echo ${{ needs.lint-matrix.result }}
+      - name: Interpret result
+        run: |
+          if [[ success == ${{ needs.lint-matrix.result }} ]]
+          then
+            echo "All matrix jobs passed!"
+          else
+            echo "One or more matrix jobs failed."
+            false
+          fi
+  govulncheck:
+    strategy:
+      fail-fast: false
+      matrix:
+        group:
+          - receiver-0
+          - receiver-1
+          - processor
+          - exporter
+          - extension
+          - connector
+          - internal
+          - pkg
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ~1.19.10
+          cache: false
+      - name: Cache Go
+        id: go-cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/go/bin
+            ~/go/pkg/mod
+          key: go-cache-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+      - name: Install Tools
+        if: steps.go-cache.outputs.cache-hit != 'true'
+        run: make install-tools
+      - name: Run `govulncheck`
+        run: make -j2 gogovulncheck GROUP=${{ matrix.group }}
   checks:
     runs-on: ubuntu-latest
     needs: [setup-environment]
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
-      - name: Setup Go
-        uses: actions/setup-go@v3
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v4
         with:
-          go-version: 1.17
-      - name: Setup Go Environment
-        run: |
-          echo "GOPATH=$(go env GOPATH)" >> $GITHUB_ENV
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+          go-version: 1.19
+          cache: false
       - name: Cache Go
         id: go-cache
         uses: actions/cache@v3
@@ -95,39 +170,70 @@ jobs:
             ~/go/bin
             ~/go/pkg/mod
           key: go-cache-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+      - name: Install dependencies
+        if: steps.go-cache.outputs.cache-hit != 'true'
+        run: make -j2 gomoddownload
+      - name: Install Tools
+        if: steps.go-cache.outputs.cache-hit != 'true'
+        run: make install-tools
       - name: CheckDoc
         run: make checkdoc
       - name: Porto
         run: |
-          make goporto
+          make -j2 goporto
           git diff --exit-code || (echo 'Porto links are out of date, please run "make goporto" and commit the changes in this PR.' && exit 1)
+      - name: crosslink
+        run: |
+          make crosslink
+          git diff --exit-code || (echo 'Replace statements are out of date, please run "make crosslink" and commit the changes in this PR.' && exit 1)
       - name: Check for go mod dependency changes
         run: |
           make gotidy
           git diff --exit-code || (echo 'go.mod/go.sum deps changes detected, please run "make gotidy" and commit the changes in this PR.' && exit 1)
+      - name: Gen genotelcontribcol
+        run: |
+          make genotelcontribcol
+          git diff -s --exit-code || (echo 'Generated code is out of date, please run "make genotelcontribcol" and commit the changes in this PR.' && exit 1)
+      - name: Gen genoteltestbedcol
+        run: |
+          make genoteltestbedcol
+          git diff -s --exit-code || (echo 'Generated code is out of date, please run "make genoteltestbedcol" and commit the changes in this PR.' && exit 1)
       - name: CodeGen
         run: |
-          make generate
+          make -j2 generate
           git diff --exit-code ':!*go.sum' || (echo 'Generated code is out of date, please run "make generate" and commit the changes in this PR.' && exit 1)
+      - name: Check gendependabot
+        run: |
+          make -j2 gendependabot
+          git diff --exit-code ':!*go.sum' || (echo 'dependabot.yml is out of date, please run "make gendependabot" and commit the changes in this PR.' && exit 1)
       - name: MultimodVerify
         run: make multimod-verify
-  unittest:
+      - name: Components dropdown in issue templates
+        run: |
+          make generate-gh-issue-templates
+          git diff --exit-code '.github/ISSUE_TEMPLATE' || (echo 'Dropdowns in issue templates are out of date, please run "make generate-gh-issue-templates" and commit the changes in this PR.' && exit 1)
+  unittest-matrix:
     strategy:
       matrix:
-        go-version: [1.18, 1.17]
+        go-version: ["1.20", 1.19] # 1.20 is interpreted as 1.2 without quotes
+        group:
+          - receiver-0
+          - receiver-1
+          - processor
+          - exporter
+          - extension
+          - connector
+          - internal
+          - pkg
+          - other
     runs-on: ubuntu-latest
     needs: [setup-environment]
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
-      - name: Setup Go
-        uses: actions/setup-go@v3
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v4
         with:
           go-version: ${{ matrix.go-version }}
-      - name: Setup Go Environment
-        run: |
-          echo "GOPATH=$(go env GOPATH)" >> $GITHUB_ENV
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+          cache: false
       - name: Cache Go
         id: go-cache
         uses: actions/cache@v3
@@ -136,27 +242,74 @@ jobs:
             ~/go/bin
             ~/go/pkg/mod
           key: go-cache-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+      - name: Install dependencies
+        if: steps.go-cache.outputs.cache-hit != 'true'
+        run: make -j2 gomoddownload
+      - name: Install Tools
+        if: steps.go-cache.outputs.cache-hit != 'true'
+        run: make install-tools
       - name: Cache Test Build
         uses: actions/cache@v3
         with:
           path: ~/.cache/go-build
           key: go-test-build-${{ runner.os }}-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
       - name: Run Unit Tests
-        run: make gotest
+        if: ${{ matrix.go-version == '1.19' }}
+        run: make gotest GROUP=${{ matrix.group }}
+      - name: Run Unit Tests With Coverage
+        if: ${{ matrix.go-version == '1.20' }} # only run coverage on one version
+        run: make gotest-with-cover GROUP=${{ matrix.group }}
+      - uses: actions/upload-artifact@v3
+        if: ${{ matrix.go-version == '1.20' }} # only run coverage on one version
+        with:
+          name: coverage-artifacts
+          path: ${{ matrix.group }}-coverage.txt
+  unittest:
+    if: ${{ github.actor != 'dependabot[bot]' && always() }}
+    strategy:
+      matrix:
+        go-version: ["1.20", 1.19] # 1.20 is interpreted as 1.2 without quotes
+    runs-on: ubuntu-latest
+    needs: [setup-environment, unittest-matrix]
+    steps:
+      - name: Print result
+        run: echo ${{ needs.unittest-matrix.result }}
+      - name: Interpret result
+        run: |
+          if [[ success == ${{ needs.unittest-matrix.result }} ]]
+          then
+            echo "All matrix jobs passed!"
+          else
+            echo "One or more matrix jobs failed."
+            false
+          fi
+  coverage:
+    runs-on: ubuntu-latest
+    needs: [unittest]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/download-artifact@v3
+        with:
+          name: coverage-artifacts
+      - name: Upload coverage report
+        uses: Wandalen/wretry.action@v1.0.36
+        with:
+          action: codecov/codecov-action@v3
+          with: |
+            fail_ci_if_error: true
+            verbose: true
+          attempt_limit: 5
+          attempt_delay: 10000
+
   integration-tests:
     runs-on: ubuntu-latest
     needs: [setup-environment]
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
-      - name: Setup Go
-        uses: actions/setup-go@v3
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v4
         with:
-          go-version: 1.17
-      - name: Setup Go Environment
-        run: |
-          echo "GOPATH=$(go env GOPATH)" >> $GITHUB_ENV
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+          go-version: 1.19
+          cache: false
       - name: Cache Go
         id: go-cache
         uses: actions/cache@v3
@@ -166,22 +319,17 @@ jobs:
             ~/go/pkg/mod
           key: go-cache-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
       - name: Run Integration Tests
-        run: make integration-tests-with-cover
+        run: make integration-test
 
   correctness-traces:
     runs-on: ubuntu-latest
     needs: [setup-environment]
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
-      - name: Setup Go
-        uses: actions/setup-go@v3
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v4
         with:
-          go-version: 1.17
-      - name: Setup Go Environment
-        run: |
-          echo "GOPATH=$(go env GOPATH)" >> $GITHUB_ENV
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+          go-version: 1.19
+          cache: false
       - name: Cache Go
         id: go-cache
         uses: actions/cache@v3
@@ -190,22 +338,23 @@ jobs:
             ~/go/bin
             ~/go/pkg/mod
           key: go-cache-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+      - name: Install dependencies
+        if: steps.go-cache.outputs.cache-hit != 'true'
+        run: make -j2 gomoddownload
+      - name: Install Tools
+        if: steps.go-cache.outputs.cache-hit != 'true'
+        run: make install-tools
       - name: Correctness
         run: make -C testbed run-correctness-traces-tests
   correctness-metrics:
     runs-on: ubuntu-latest
     needs: [setup-environment]
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
-      - name: Setup Go
-        uses: actions/setup-go@v3
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v4
         with:
-          go-version: 1.17
-      - name: Setup Go Environment
-        run: |
-          echo "GOPATH=$(go env GOPATH)" >> $GITHUB_ENV
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+          go-version: 1.19
+          cache: false
       - name: Cache Go
         id: go-cache
         uses: actions/cache@v3
@@ -214,6 +363,12 @@ jobs:
             ~/go/bin
             ~/go/pkg/mod
           key: go-cache-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+      - name: Install dependencies
+        if: steps.go-cache.outputs.cache-hit != 'true'
+        run: make -j2 gomoddownload
+      - name: Install Tools
+        if: steps.go-cache.outputs.cache-hit != 'true'
+        run: make install-tools
       - name: Correctness
         run: make -C testbed run-correctness-metrics-tests
 
@@ -221,8 +376,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [setup-environment]
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
       - name: Build Examples
         run: make build-examples
 
@@ -231,23 +385,35 @@ jobs:
     needs: [unittest, integration-tests, lint]
     strategy:
       matrix:
-        binary:
-          - darwin_amd64
-          - darwin_arm64
-          - linux_amd64
-          - linux_arm64
-          - windows_amd64
+        os:
+          - darwin
+          - linux
+          - windows
+        arch:
+          - 386
+          - amd64
+          - arm
+          - arm64
+          - ppc64le
+        exclude:
+          - os: darwin
+            arch: 386
+          - os: darwin
+            arch: arm
+          - os: darwin
+            arch: ppc64le
+          - os: windows
+            arch: arm
+          - os: windows
+            arch: arm64
+          - os: windows
+            arch: ppc64le
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
-      - name: Setup Go
-        uses: actions/setup-go@v3
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v4
         with:
-          go-version: 1.17
-      - name: Setup Go Environment
-        run: |
-          echo "GOPATH=$(go env GOPATH)" >> $GITHUB_ENV
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+          go-version: 1.19
+          cache: false
       - name: Cache Go
         id: go-cache
         uses: actions/cache@v3
@@ -256,8 +422,14 @@ jobs:
             ~/go/bin
             ~/go/pkg/mod
           key: go-cache-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+      - name: Install dependencies
+        if: steps.go-cache.outputs.cache-hit != 'true'
+        run: make -j2 gomoddownload
+      - name: Install Tools
+        if: steps.go-cache.outputs.cache-hit != 'true'
+        run: make install-tools
       - name: Build Collector ${{ matrix.binary }}
-        run: make otelcontribcol-${{ matrix.binary }}
+        run: make GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} otelcontribcol
       - name: Upload Collector Binaries
         uses: actions/upload-artifact@v3
         with:
@@ -265,19 +437,19 @@ jobs:
           path: ./bin/*
 
   build-package:
-    runs-on: ubuntu-latest
+    # Use 20.04.5 until https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/16450 is resolved
+    runs-on: ubuntu-20.04
     needs: [cross-compile]
     strategy:
       fail-fast: false
       matrix:
         package_type: ["deb", "rpm"]
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
         with:
           fetch-depth: 0
       - name: Install Ruby
-        uses: actions/setup-ruby@v1
+        uses: ruby/setup-ruby@v1
         with:
           ruby-version: '2.6'
       - name: Install fpm
@@ -295,12 +467,14 @@ jobs:
         run: ./internal/buildscripts/packaging/fpm/${{ matrix.package_type }}/build.sh "${{ steps.github_tag.outputs.tag }}" "amd64" "./dist/"
       - name: Build ${{ matrix.package_type }} arm64 package
         run: ./internal/buildscripts/packaging/fpm/${{ matrix.package_type }}/build.sh "${{ steps.github_tag.outputs.tag }}" "arm64" "./dist/"
+      - name: Build ${{ matrix.package_type }} ppc64le package
+        run: ./internal/buildscripts/packaging/fpm/${{ matrix.package_type }}/build.sh "${{ steps.github_tag.outputs.tag }}" "ppc64le" "./dist/"
       - name: Test ${{ matrix.package_type }} package
         run: |
           if [[ "${{ matrix.package_type }}" = "deb" ]]; then
-              ./internal/buildscripts/packaging/fpm/test.sh dist/otel-contrib-collector*amd64.deb examples/tracing/otel-collector-config.yml
+              ./internal/buildscripts/packaging/fpm/test.sh dist/otel-contrib-collector*amd64.deb examples/demo/otel-collector-config.yaml
           else
-              ./internal/buildscripts/packaging/fpm/test.sh dist/otel-contrib-collector*x86_64.rpm examples/tracing/otel-collector-config.yml
+              ./internal/buildscripts/packaging/fpm/test.sh dist/otel-contrib-collector*x86_64.rpm examples/demo/otel-collector-config.yaml
           fi
       - name: Upload Packages
         uses: actions/upload-artifact@v3
@@ -308,11 +482,11 @@ jobs:
           name: collector-packages
           path: ./dist/*
   windows-msi:
+    if: false # skip. See https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/10113
     runs-on: windows-latest
     needs: [cross-compile]
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
         with:
           fetch-depth: 0
       - name: Download Binaries
@@ -345,14 +519,14 @@ jobs:
 
   publish-check:
     runs-on: ubuntu-latest
-    needs: [build-package, windows-msi]
+    needs: [build-package]
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
       - name: Download Binaries
         uses: actions/download-artifact@v3
         with:
           name: collector-binaries
+          path: ./bin/
       - name: Download Packages
         uses: actions/download-artifact@v3
         with:
@@ -363,19 +537,16 @@ jobs:
         run: ./.github/workflows/scripts/verify-dist-files-exist.sh
   publish-dev:
     runs-on: ubuntu-latest
-    needs: [lint, unittest, integration-tests, build-package, windows-msi]
+    needs: [lint, unittest, integration-tests, build-package]
     if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && github.repository == 'open-telemetry/opentelemetry-collector-contrib'
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
-      - name: Setup Go
-        uses: actions/setup-go@v3
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v4
         with:
-          go-version: 1.17
-      - name: Setup Go Environment
+          go-version: 1.19
+          cache: false
+      - name: Mkdir bin and dist
         run: |
-          echo "GOPATH=$(go env GOPATH)" >> $GITHUB_ENV
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
           mkdir bin/ dist/
       - name: Cache Go
         id: go-cache
@@ -385,6 +556,12 @@ jobs:
             ~/go/bin
             ~/go/pkg/mod
           key: go-cache-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+      - name: Install dependencies
+        if: steps.go-cache.outputs.cache-hit != 'true'
+        run: make -j2 gomoddownload
+      - name: Install Tools
+        if: steps.go-cache.outputs.cache-hit != 'true'
+        run: make install-tools
       - name: Download Binaries
         uses: actions/download-artifact@v3
         with:
@@ -424,36 +601,49 @@ jobs:
             docker push otel/opentelemetry-collector-contrib-dev:latest
   publish-stable:
     runs-on: ubuntu-latest
-    needs: [lint, unittest, integration-tests, build-package, windows-msi]
+    needs: [lint, unittest, integration-tests, build-package]
     if: startsWith(github.ref, 'refs/tags/v') && github.repository == 'open-telemetry/opentelemetry-collector-contrib'
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
-      - name: Setup Go
-        uses: actions/setup-go@v3
-        with:
-          go-version: 1.17
-      - name: Setup Go Environment
-        run: |
-          echo "GOPATH=$(go env GOPATH)" >> $GITHUB_ENV
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
-          mkdir bin/ dist/
-      - name: Cache Go
-        id: go-cache
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/go/bin
-            ~/go/pkg/mod
-          key: go-cache-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+      - uses: actions/checkout@v3
       - name: Set Release Tag
         id: github_tag
         run: ./.github/workflows/scripts/set_release_tag.sh
       - name: Create Github Release
         run: |
-          mkdir -p dist/
-          ghr -t $GITHUB_TOKEN -u open-telemetry -r opentelemetry-collector-contrib --replace $RELEASE_TAG dist/
+          gh release create $RELEASE_TAG -t $RELEASE_TAG -n "The OpenTelemetry Collector Contrib contains everything in the [opentelemetry-collector release](https://github.com/open-telemetry/opentelemetry-collector/releases/tag/$RELEASE_TAG), be sure to check the release notes there as well."
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.github_tag.outputs.tag }}
+  rotate-milestone:
+    # This job updates the "next release" milestone
+    # to the latest released version and creates a new milestone
+    # named "next release" in its place
+    runs-on: ubuntu-latest
+    needs: [publish-stable]
+    if: startsWith(github.ref, 'refs/tags/v') && github.repository == 'open-telemetry/opentelemetry-collector-contrib'
+    steps:
+      - uses: actions/github-script@v6
+        with:
+          script: |
+            const milestones = await github.rest.issues.listMilestones({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open"
+            })
+            for (const milestone of milestones.data) {
+              if (milestone.title == "next release") {
+                await github.rest.issues.updateMilestone({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  milestone_number: milestone.number,
+                  title: "${{ github.ref_name }}"
+                });
+                await github.rest.issues.createMilestone({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: "next release"
+                });
+                return
+              }
+            }
 

@@ -1,16 +1,5 @@
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package awsemfexporter // import "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/awsemfexporter"
 
@@ -28,9 +17,8 @@ import (
 
 const (
 	// OTel instrumentation lib name as dimension
-	oTellibDimensionKey          = "OTelLib"
-	defaultNamespace             = "default"
-	noInstrumentationLibraryName = "Undefined"
+	oTellibDimensionKey = "OTelLib"
+	defaultNamespace    = "default"
 
 	// DimensionRollupOptions
 	zeroAndSingleDimensionRollup = "ZeroAndSingleDimensionRollup"
@@ -41,12 +29,12 @@ const (
 	fieldPrometheusMetricType = "prom_metric_type"
 )
 
-var fieldPrometheusTypes = map[pmetric.MetricDataType]string{
-	pmetric.MetricDataTypeNone:      "",
-	pmetric.MetricDataTypeGauge:     "gauge",
-	pmetric.MetricDataTypeSum:       "counter",
-	pmetric.MetricDataTypeHistogram: "histogram",
-	pmetric.MetricDataTypeSummary:   "summary",
+var fieldPrometheusTypes = map[pmetric.MetricType]string{
+	pmetric.MetricTypeEmpty:     "",
+	pmetric.MetricTypeGauge:     "gauge",
+	pmetric.MetricTypeSum:       "counter",
+	pmetric.MetricTypeHistogram: "histogram",
+	pmetric.MetricTypeSummary:   "summary",
 }
 
 type cWMetrics struct {
@@ -68,20 +56,31 @@ type cWMetricStats struct {
 	Sum   float64
 }
 
+// The SampleCount of CloudWatch metrics will be calculated by the sum of the 'Counts' array.
+// The 'Count' field should be same as the sum of the 'Counts' array and will be ignored in CloudWatch.
+type cWMetricHistogram struct {
+	Values []float64
+	Counts []float64
+	Max    float64
+	Min    float64
+	Count  uint64
+	Sum    float64
+}
+
 type groupedMetricMetadata struct {
-	namespace   string
-	timestampMs int64
-	logGroup    string
-	logStream   string
+	namespace                  string
+	timestampMs                int64
+	logGroup                   string
+	logStream                  string
+	metricDataType             pmetric.MetricType
+	retainInitialValueForDelta bool
 }
 
 // cWMetricMetadata represents the metadata associated with a given CloudWatch metric
 type cWMetricMetadata struct {
 	groupedMetricMetadata
-	instrumentationLibraryName string
-
-	receiver       string
-	metricDataType pmetric.MetricDataType
+	instrumentationScopeName string
+	receiver                 string
 }
 
 type metricTranslator struct {
@@ -91,7 +90,7 @@ type metricTranslator struct {
 func newMetricTranslator(config Config) metricTranslator {
 	mt := map[string]MetricDescriptor{}
 	for _, descriptor := range config.MetricDescriptors {
-		mt[descriptor.metricName] = descriptor
+		mt[descriptor.MetricName] = descriptor
 	}
 	return metricTranslator{
 		metricDescriptor: mt,
@@ -99,23 +98,21 @@ func newMetricTranslator(config Config) metricTranslator {
 }
 
 // translateOTelToGroupedMetric converts OT metrics to Grouped Metric format.
-func (mt metricTranslator) translateOTelToGroupedMetric(rm *pmetric.ResourceMetrics, groupedMetrics map[interface{}]*groupedMetric, config *Config) error {
+func (mt metricTranslator) translateOTelToGroupedMetric(rm pmetric.ResourceMetrics, groupedMetrics map[interface{}]*groupedMetric, config *Config) error {
 	timestamp := time.Now().UnixNano() / int64(time.Millisecond)
-	var instrumentationLibName string
+	var instrumentationScopeName string
 	cWNamespace := getNamespace(rm, config.Namespace)
 	logGroup, logStream, patternReplaceSucceeded := getLogInfo(rm, cWNamespace, config)
 
 	ilms := rm.ScopeMetrics()
 	var metricReceiver string
 	if receiver, ok := rm.Resource().Attributes().Get(attributeReceiver); ok {
-		metricReceiver = receiver.StringVal()
+		metricReceiver = receiver.Str()
 	}
 	for j := 0; j < ilms.Len(); j++ {
 		ilm := ilms.At(j)
-		if ilm.Scope().Name() == "" {
-			instrumentationLibName = noInstrumentationLibraryName
-		} else {
-			instrumentationLibName = ilm.Scope().Name()
+		if ilm.Scope().Name() != "" {
+			instrumentationScopeName = ilm.Scope().Name()
 		}
 
 		metrics := ilm.Metrics()
@@ -123,16 +120,16 @@ func (mt metricTranslator) translateOTelToGroupedMetric(rm *pmetric.ResourceMetr
 			metric := metrics.At(k)
 			metadata := cWMetricMetadata{
 				groupedMetricMetadata: groupedMetricMetadata{
-					namespace:   cWNamespace,
-					timestampMs: timestamp,
-					logGroup:    logGroup,
-					logStream:   logStream,
+					namespace:      cWNamespace,
+					timestampMs:    timestamp,
+					logGroup:       logGroup,
+					logStream:      logStream,
+					metricDataType: metric.Type(),
 				},
-				instrumentationLibraryName: instrumentationLibName,
-				receiver:                   metricReceiver,
-				metricDataType:             metric.DataType(),
+				instrumentationScopeName: instrumentationScopeName,
+				receiver:                 metricReceiver,
 			}
-			err := addToGroupedMetric(&metric, groupedMetrics, metadata, patternReplaceSucceeded, config.logger, mt.metricDescriptor, config)
+			err := addToGroupedMetric(metric, groupedMetrics, metadata, patternReplaceSucceeded, config.logger, mt.metricDescriptor, config)
 			if err != nil {
 				return err
 			}
@@ -250,7 +247,7 @@ func groupedMetricToCWMeasurementsWithFilters(groupedMetric *groupedMetric, conf
 	// If the whole batch of metrics don't match any metric declarations, drop them
 	if len(metricDeclarations) == 0 {
 		labelsStr, _ := json.Marshal(labels)
-		metricNames := make([]string, 0)
+		var metricNames []string
 		for metricName := range groupedMetric.metrics {
 			metricNames = append(metricNames, metricName)
 		}
@@ -341,10 +338,9 @@ func groupedMetricToCWMeasurementsWithFilters(groupedMetric *groupedMetric, conf
 // translateCWMetricToEMF converts CloudWatch Metric format to EMF.
 func translateCWMetricToEMF(cWMetric *cWMetrics, config *Config) *cwlogs.Event {
 	// convert CWMetric into map format for compatible with PLE input
-	cWMetricMap := make(map[string]interface{})
 	fieldMap := cWMetric.fields
 
-	//restore the json objects that are stored as string in attributes
+	// restore the json objects that are stored as string in attributes
 	for _, key := range config.ParseJSONEncodedAttributeValues {
 		if fieldMap[key] == nil {
 			continue
@@ -372,12 +368,51 @@ func translateCWMetricToEMF(cWMetric *cWMetrics, config *Config) *cwlogs.Event {
 		}
 	}
 
-	// Create `_aws` section only if there are measurements
+	// Create EMF metrics if there are measurements
+	// https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch_Embedded_Metric_Format_Specification.html#CloudWatch_Embedded_Metric_Format_Specification_structure
 	if len(cWMetric.measurements) > 0 {
-		// Create `_aws` section only if there are measurements
-		cWMetricMap["CloudWatchMetrics"] = cWMetric.measurements
-		cWMetricMap["Timestamp"] = cWMetric.timestampMs
-		fieldMap["_aws"] = cWMetricMap
+		if config.Version == "1" {
+			/* 	EMF V1
+				"Version": "1",
+				"_aws": {
+					"CloudWatchMetrics": [
+					{
+						"Namespace": "ECS",
+						"Dimensions": [ ["ClusterName"] ],
+						"Metrics": [{"Name": "memcached_commands_total"}]
+					}
+					],
+					"Timestamp": 1668387032641
+			  	}
+			*/
+			fieldMap["Version"] = "1"
+			fieldMap["_aws"] = map[string]interface{}{
+				"CloudWatchMetrics": cWMetric.measurements,
+				"Timestamp":         cWMetric.timestampMs,
+			}
+
+		}
+	}
+
+	if config.Version == "0" {
+		fieldMap["Timestamp"] = fmt.Sprint(cWMetric.timestampMs)
+		if len(cWMetric.measurements) > 0 {
+			/* 	EMF V0
+				{
+					"Version": "0",
+					"CloudWatchMetrics": [
+					{
+						"Namespace": "ECS",
+						"Dimensions": [ ["ClusterName"] ],
+						"Metrics": [{"Name": "memcached_commands_total"}]
+					}
+					],
+					"Timestamp": "1668387032641"
+			  	}
+			*/
+			fieldMap["Version"] = "0"
+			fieldMap["CloudWatchMetrics"] = cWMetric.measurements
+		}
 	}
 
 	pleMsg, err := json.Marshal(fieldMap)

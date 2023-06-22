@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package idbatcher
 
@@ -18,12 +7,12 @@ import (
 	"encoding/binary"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/pdata/pcommon"
-	"go.uber.org/atomic"
 )
 
 func TestBatcherNew(t *testing.T) {
@@ -41,10 +30,7 @@ func TestBatcherNew(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := New(tt.numBatches, tt.newBatchesInitialCapacity, tt.batchChannelSize)
-			if err != tt.wantErr {
-				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
+			require.ErrorIs(t, err, tt.wantErr)
 			if got != nil {
 				got.Stop()
 			}
@@ -70,12 +56,12 @@ func BenchmarkConcurrentEnqueue(b *testing.B) {
 
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	ticked := atomic.NewInt64(0)
-	received := atomic.NewInt64(0)
+	ticked := &atomic.Int64{}
+	received := &atomic.Int64{}
 	go func() {
 		for range ticker.C {
 			batch, _ := batcher.CloseCurrentAndTakeFirstBatch()
-			ticked.Inc()
+			ticked.Add(1)
 			received.Add(int64(len(batch)))
 		}
 	}()
@@ -143,11 +129,11 @@ func concurrencyTest(t *testing.T, numBatches, newBatchesInitialCapacity, batchC
 
 	idSeen := make(map[[16]byte]bool, len(ids))
 	for _, id := range got {
-		idSeen[id.Bytes()] = true
+		idSeen[id] = true
 	}
 
 	for i := 0; i < len(ids); i++ {
-		require.True(t, idSeen[ids[i].Bytes()], "want id %v but id was not seen", ids[i])
+		require.True(t, idSeen[ids[i]], "want id %v but id was not seen", ids[i])
 	}
 }
 
@@ -157,7 +143,7 @@ func generateSequentialIds(numIds uint64) []pcommon.TraceID {
 		traceID := [16]byte{}
 		binary.BigEndian.PutUint64(traceID[:8], 0)
 		binary.BigEndian.PutUint64(traceID[8:], i)
-		ids[i] = pcommon.NewTraceID(traceID)
+		ids[i] = pcommon.TraceID(traceID)
 	}
 	return ids
 }

@@ -1,23 +1,12 @@
-// Copyright 2019, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package collectdreceiver
 
 import (
 	"encoding/json"
-	"io/ioutil"
 	"os"
+	"path/filepath"
 	"testing"
 
 	metricspb "github.com/census-instrumentation/opencensus-proto/gen-go/metrics/v1"
@@ -27,12 +16,12 @@ import (
 )
 
 func TestDecodeEvent(t *testing.T) {
-	m1 := []*metricspb.Metric{}
+	var m1 []*metricspb.Metric
 
-	jsonData, err := loadFromJSON("./testdata/event.json")
+	jsonData, err := os.ReadFile(filepath.Join("testdata", "event.json"))
 	require.NoError(t, err)
 
-	records := []collectDRecord{}
+	var records []collectDRecord
 	err = json.Unmarshal(jsonData, &records)
 	require.NoError(t, err)
 
@@ -43,24 +32,13 @@ func TestDecodeEvent(t *testing.T) {
 	}
 }
 
-func loadFromJSON(path string) ([]byte, error) {
-	var body []byte
-	jsonFile, err := os.Open(path)
-	if err != nil {
-		return body, err
-	}
-	defer jsonFile.Close()
-
-	return ioutil.ReadAll(jsonFile)
-}
-
 func TestDecodeMetrics(t *testing.T) {
-	metrics := []*metricspb.Metric{}
+	var metrics []*metricspb.Metric
 
-	jsonData, err := loadFromJSON("./testdata/collectd.json")
+	jsonData, err := os.ReadFile(filepath.Join("testdata", "collectd.json"))
 	require.NoError(t, err)
 
-	records := []collectDRecord{}
+	var records []collectDRecord
 	err = json.Unmarshal(jsonData, &records)
 	require.NoError(t, err)
 

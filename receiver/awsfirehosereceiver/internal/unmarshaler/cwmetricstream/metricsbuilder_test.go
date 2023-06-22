@@ -1,16 +1,5 @@
-// Copyright  The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package cwmetricstream
 
@@ -63,13 +52,14 @@ func TestMetricBuilder(t *testing.T) {
 			Value:      testCWMetricValue(),
 			Dimensions: map[string]string{"CustomDimension": "test"},
 		}
-		mb := newMetricBuilder(metric.MetricName, metric.Unit)
+		gots := pmetric.NewMetricSlice()
+		mb := newMetricBuilder(gots, metric.MetricName, metric.Unit)
 		mb.AddDataPoint(metric)
-		got := pmetric.NewMetric()
-		mb.Build(got)
+		require.Equal(t, 1, gots.Len())
+		got := gots.At(0)
 		require.Equal(t, metric.MetricName, got.Name())
 		require.Equal(t, metric.Unit, got.Unit())
-		require.Equal(t, pmetric.MetricDataTypeSummary, got.DataType())
+		require.Equal(t, pmetric.MetricTypeSummary, got.Type())
 		gotDps := got.Summary().DataPoints()
 		require.Equal(t, 1, gotDps.Len())
 		gotDp := gotDps.At(0)
@@ -102,12 +92,13 @@ func TestMetricBuilder(t *testing.T) {
 				},
 			},
 		}
-		mb := newMetricBuilder("name", "unit")
+		gots := pmetric.NewMetricSlice()
+		mb := newMetricBuilder(gots, "name", "unit")
 		for _, metric := range metrics {
 			mb.AddDataPoint(metric)
 		}
-		got := pmetric.NewMetric()
-		mb.Build(got)
+		require.Equal(t, 1, gots.Len())
+		got := gots.At(0)
 		gotDps := got.Summary().DataPoints()
 		require.Equal(t, 1, gotDps.Len())
 		gotDp := gotDps.At(0)
@@ -158,10 +149,11 @@ func TestResourceMetricsBuilder(t *testing.T) {
 				region:           testRegion,
 				namespace:        testCase.namespace,
 			}
-			rmb := newResourceMetricsBuilder(attrs)
+			gots := pmetric.NewMetrics()
+			rmb := newResourceMetricsBuilder(gots, attrs)
 			rmb.AddMetric(metric)
-			got := pmetric.NewResourceMetrics()
-			rmb.Build(got)
+			require.Equal(t, 1, gots.ResourceMetrics().Len())
+			got := gots.ResourceMetrics().At(0)
 			gotAttrs := got.Resource().Attributes()
 			for wantKey, wantValue := range testCase.wantAttributes {
 				gotValue, ok := gotAttrs.Get(wantKey)
@@ -199,12 +191,13 @@ func TestResourceMetricsBuilder(t *testing.T) {
 			region:           testRegion,
 			namespace:        "AWS/EC2",
 		}
-		rmb := newResourceMetricsBuilder(attrs)
+		gots := pmetric.NewMetrics()
+		rmb := newResourceMetricsBuilder(gots, attrs)
 		for _, metric := range metrics {
 			rmb.AddMetric(metric)
 		}
-		got := pmetric.NewResourceMetrics()
-		rmb.Build(got)
+		require.Equal(t, 1, gots.ResourceMetrics().Len())
+		got := gots.ResourceMetrics().At(0)
 		require.Equal(t, 1, got.ScopeMetrics().Len())
 		gotMetrics := got.ScopeMetrics().At(0).Metrics()
 		require.Equal(t, 1, gotMetrics.Len())

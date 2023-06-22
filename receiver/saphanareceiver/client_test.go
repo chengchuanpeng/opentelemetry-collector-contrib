@@ -1,16 +1,5 @@
-// Copyright  The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package saphanareceiver
 
@@ -43,7 +32,7 @@ func (m *testResultWrapper) Scan(dest ...interface{}) error {
 		*d = m.contents[m.current][i]
 	}
 
-	m.current = m.current + 1
+	m.current++
 	return nil
 }
 
@@ -53,7 +42,7 @@ func (m *testResultWrapper) Close() error {
 
 type testDBWrapper struct{ mock.Mock }
 
-func (m *testDBWrapper) PingContext(ctx context.Context) error {
+func (m *testDBWrapper) PingContext(_ context.Context) error {
 	args := m.Called()
 	return args.Error(0)
 }
@@ -63,7 +52,7 @@ func (m *testDBWrapper) Close() error {
 	return args.Error(0)
 }
 
-func (m *testDBWrapper) QueryContext(ctx context.Context, query string) (resultWrapper, error) {
+func (m *testDBWrapper) QueryContext(_ context.Context, query string) (resultWrapper, error) {
 	args := m.Called(query)
 	result := args.Get(0).(*testResultWrapper)
 	err := args.Error(1)
@@ -71,9 +60,9 @@ func (m *testDBWrapper) QueryContext(ctx context.Context, query string) (resultW
 }
 
 func (m *testDBWrapper) mockQueryResult(query string, results [][]*string, err error) {
-	nullableResult := [][]sql.NullString{}
+	var nullableResult [][]sql.NullString
 	for _, row := range results {
-		nullableRow := []sql.NullString{}
+		var nullableRow []sql.NullString
 		for _, field := range row {
 			if field == nil {
 				nullableRow = append(nullableRow, sql.NullString{Valid: false})
@@ -96,7 +85,7 @@ type testConnectionFactory struct {
 	dbWrapper *testDBWrapper
 }
 
-func (m *testConnectionFactory) getConnection(c driver.Connector) dbWrapper {
+func (m *testConnectionFactory) getConnection(_ driver.Connector) dbWrapper {
 	return m.dbWrapper
 }
 
@@ -148,15 +137,17 @@ func TestSimpleQueryOutput(t *testing.T) {
 			{
 				key: "value",
 				addMetricFunction: func(mb *metadata.MetricsBuilder, t pcommon.Timestamp, val string,
-					m map[string]string) {
+					m map[string]string) error {
 					// Function is a no-op as it's not required for this test
+					return nil
 				},
 			},
 			{
 				key: "rate",
 				addMetricFunction: func(mb *metadata.MetricsBuilder, t pcommon.Timestamp, val string,
-					m map[string]string) {
+					m map[string]string) error {
 					// Function is a no-op as it's not required for this test
+					return nil
 				},
 			},
 		},
@@ -202,15 +193,17 @@ func TestNullOutput(t *testing.T) {
 			{
 				key: "value",
 				addMetricFunction: func(mb *metadata.MetricsBuilder, t pcommon.Timestamp, val string,
-					m map[string]string) {
+					m map[string]string) error {
 					// Function is a no-op as it's not required for this test
+					return nil
 				},
 			},
 			{
 				key: "rate",
 				addMetricFunction: func(mb *metadata.MetricsBuilder, t pcommon.Timestamp, val string,
-					m map[string]string) {
+					m map[string]string) error {
 					// Function is a no-op as it's not required for this test
+					return nil
 				},
 			},
 		},

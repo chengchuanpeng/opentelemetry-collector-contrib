@@ -1,27 +1,14 @@
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
-// nolint:errcheck
 package splunkhecreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/splunkhecreceiver"
 
 import (
-	"bufio"
 	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -34,24 +21,30 @@ import (
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/obsreport"
 	"go.opentelemetry.io/collector/pdata/pcommon"
-	"go.opentelemetry.io/collector/pdata/plog"
+	"go.opentelemetry.io/collector/receiver"
 	"go.uber.org/zap"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/splunk"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/splunkhecreceiver/internal/metadata"
 )
 
 const (
 	defaultServerTimeout = 20 * time.Second
 
 	responseOK                        = "OK"
+	responseHecHealthy                = `{"text": "HEC is healthy", "code": 17}`
 	responseInvalidMethod             = `Only "POST" method is supported`
 	responseInvalidEncoding           = `"Content-Encoding" must be "gzip" or empty`
+	responseInvalidDataFormat         = `{"text":"Invalid data format","code":6}`
+	responseErrEventRequired          = `{"text":"Event field is required","code":12}`
+	responseErrEventBlank             = `{"text":"Event field cannot be blank","code":13}`
 	responseErrGzipReader             = "Error on gzip body"
 	responseErrUnmarshalBody          = "Failed to unmarshal message body"
 	responseErrInternalServerError    = "Internal Server Error"
 	responseErrUnsupportedMetricEvent = "Unsupported metric event"
 	responseErrUnsupportedLogEvent    = "Unsupported log event"
-
+	responseErrHandlingIndexedFields  = `{"text":"Error in handling indexed fields","code":15,"invalid-event-number":%d}`
+	responseNoData                    = `{"text":"No data","code":5}`
 	// Centralizing some HTTP and related string constants.
 	gzipEncoding              = "gzip"
 	httpContentEncodingHeader = "Content-Encoding"
@@ -65,18 +58,22 @@ var (
 	errInvalidEncoding        = errors.New("invalid encoding")
 
 	okRespBody                = initJSONResponse(responseOK)
-	invalidMethodRespBody     = initJSONResponse(responseInvalidMethod)
+	eventRequiredRespBody     = initJSONResponse(responseErrEventRequired)
+	eventBlankRespBody        = initJSONResponse(responseErrEventBlank)
 	invalidEncodingRespBody   = initJSONResponse(responseInvalidEncoding)
+	invalidFormatRespBody     = initJSONResponse(responseInvalidDataFormat)
+	invalidMethodRespBody     = initJSONResponse(responseInvalidMethod)
 	errGzipReaderRespBody     = initJSONResponse(responseErrGzipReader)
 	errUnmarshalBodyRespBody  = initJSONResponse(responseErrUnmarshalBody)
 	errInternalServerError    = initJSONResponse(responseErrInternalServerError)
 	errUnsupportedMetricEvent = initJSONResponse(responseErrUnsupportedMetricEvent)
 	errUnsupportedLogEvent    = initJSONResponse(responseErrUnsupportedLogEvent)
+	noDataRespBody            = initJSONResponse(responseNoData)
 )
 
-// splunkReceiver implements the component.MetricsReceiver for Splunk HEC metric protocol.
+// splunkReceiver implements the receiver.Metrics for Splunk HEC metric protocol.
 type splunkReceiver struct {
-	settings        component.ReceiverCreateSettings
+	settings        receiver.CreateSettings
 	config          *Config
 	logsConsumer    consumer.Logs
 	metricsConsumer consumer.Metrics
@@ -86,14 +83,14 @@ type splunkReceiver struct {
 	gzipReaderPool  *sync.Pool
 }
 
-var _ component.MetricsReceiver = (*splunkReceiver)(nil)
+var _ receiver.Metrics = (*splunkReceiver)(nil)
 
 // newMetricsReceiver creates the Splunk HEC receiver with the given configuration.
 func newMetricsReceiver(
-	settings component.ReceiverCreateSettings,
+	settings receiver.CreateSettings,
 	config Config,
 	nextConsumer consumer.Metrics,
-) (component.MetricsReceiver, error) {
+) (receiver.Metrics, error) {
 	if nextConsumer == nil {
 		return nil, errNilNextMetricsConsumer
 	}
@@ -107,6 +104,14 @@ func newMetricsReceiver(
 		transport = "https"
 	}
 
+	obsrecv, err := obsreport.NewReceiver(obsreport.ReceiverSettings{
+		ReceiverID:             settings.ID,
+		Transport:              transport,
+		ReceiverCreateSettings: settings,
+	})
+	if err != nil {
+		return nil, err
+	}
 	r := &splunkReceiver{
 		settings:        settings,
 		config:          &config,
@@ -118,11 +123,7 @@ func newMetricsReceiver(
 			ReadHeaderTimeout: defaultServerTimeout,
 			WriteTimeout:      defaultServerTimeout,
 		},
-		obsrecv: obsreport.NewReceiver(obsreport.ReceiverSettings{
-			ReceiverID:             config.ID(),
-			Transport:              transport,
-			ReceiverCreateSettings: settings,
-		}),
+		obsrecv:        obsrecv,
 		gzipReaderPool: &sync.Pool{New: func() interface{} { return new(gzip.Reader) }},
 	}
 
@@ -131,10 +132,10 @@ func newMetricsReceiver(
 
 // newLogsReceiver creates the Splunk HEC receiver with the given configuration.
 func newLogsReceiver(
-	settings component.ReceiverCreateSettings,
+	settings receiver.CreateSettings,
 	config Config,
 	nextConsumer consumer.Logs,
-) (component.LogsReceiver, error) {
+) (receiver.Logs, error) {
 	if nextConsumer == nil {
 		return nil, errNilNextLogsConsumer
 	}
@@ -145,6 +146,15 @@ func newLogsReceiver(
 	transport := "http"
 	if config.TLSSetting != nil {
 		transport = "https"
+	}
+
+	obsrecv, err := obsreport.NewReceiver(obsreport.ReceiverSettings{
+		ReceiverID:             settings.ID,
+		Transport:              transport,
+		ReceiverCreateSettings: settings,
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	r := &splunkReceiver{
@@ -159,11 +169,7 @@ func newLogsReceiver(
 			WriteTimeout:      defaultServerTimeout,
 		},
 		gzipReaderPool: &sync.Pool{New: func() interface{} { return new(gzip.Reader) }},
-		obsrecv: obsreport.NewReceiver(obsreport.ReceiverSettings{
-			ReceiverID:             config.ID(),
-			Transport:              transport,
-			ReceiverCreateSettings: settings,
-		}),
+		obsrecv:        obsrecv,
 	}
 
 	return r, nil
@@ -173,6 +179,11 @@ func newLogsReceiver(
 // By convention the consumer of the received data is set when the receiver
 // instance is created.
 func (r *splunkReceiver) Start(_ context.Context, host component.Host) error {
+	// server.Handler will be nil on initial call, otherwise noop.
+	if r.server != nil && r.server.Handler != nil {
+		return nil
+	}
+
 	var ln net.Listener
 	// set up the listener
 	ln, err := r.config.HTTPServerSettings.ToListener()
@@ -181,6 +192,8 @@ func (r *splunkReceiver) Start(_ context.Context, host component.Host) error {
 	}
 
 	mx := mux.NewRouter()
+	mx.NewRoute().Path(r.config.HealthPath).HandlerFunc(r.handleHealthReq)
+	mx.NewRoute().Path(r.config.HealthPath + "/1.0").HandlerFunc(r.handleHealthReq).Methods("GET")
 	if r.logsConsumer != nil {
 		mx.NewRoute().Path(r.config.RawPath).HandlerFunc(r.handleRawReq)
 	}
@@ -231,7 +244,8 @@ func (r *splunkReceiver) handleRawReq(resp http.ResponseWriter, req *http.Reques
 	}
 
 	if req.ContentLength == 0 {
-		r.obsrecv.EndLogsOp(ctx, typeStr, 0, nil)
+		r.obsrecv.EndLogsOp(ctx, metadata.Type, 0, nil)
+		r.failRequest(ctx, resp, http.StatusBadRequest, noDataRespBody, 0, nil)
 		return
 	}
 
@@ -242,7 +256,7 @@ func (r *splunkReceiver) handleRawReq(resp http.ResponseWriter, req *http.Reques
 
 		if err != nil {
 			r.failRequest(ctx, resp, http.StatusBadRequest, errGzipReaderRespBody, 0, err)
-			_, _ = ioutil.ReadAll(req.Body)
+			_, _ = io.ReadAll(req.Body)
 			_ = req.Body.Close()
 			return
 		}
@@ -250,30 +264,21 @@ func (r *splunkReceiver) handleRawReq(resp http.ResponseWriter, req *http.Reques
 		defer r.gzipReaderPool.Put(reader)
 	}
 
-	sc := bufio.NewScanner(bodyReader)
-
-	ld := plog.NewLogs()
-	rl := ld.ResourceLogs().AppendEmpty()
 	resourceCustomizer := r.createResourceCustomizer(req)
-	if resourceCustomizer != nil {
-		resourceCustomizer(rl.Resource())
-	}
-	sl := rl.ScopeLogs().AppendEmpty()
-
-	for sc.Scan() {
-		logRecord := sl.LogRecords().AppendEmpty()
-		logLine := sc.Text()
-		logRecord.Body().SetStringVal(logLine)
+	ld, slLen, err := splunkHecRawToLogData(bodyReader, req.URL.Query(), resourceCustomizer, r.config)
+	if err != nil {
+		r.failRequest(ctx, resp, http.StatusInternalServerError, errInternalServerError, slLen, err)
+		return
 	}
 	consumerErr := r.logsConsumer.ConsumeLogs(ctx, ld)
 
 	_ = bodyReader.Close()
 
 	if consumerErr != nil {
-		r.failRequest(ctx, resp, http.StatusInternalServerError, errInternalServerError, sl.LogRecords().Len(), consumerErr)
+		r.failRequest(ctx, resp, http.StatusInternalServerError, errInternalServerError, slLen, consumerErr)
 	} else {
-		resp.WriteHeader(http.StatusAccepted)
-		r.obsrecv.EndLogsOp(ctx, typeStr, sl.LogRecords().Len(), nil)
+		resp.WriteHeader(http.StatusOK)
+		r.obsrecv.EndLogsOp(ctx, metadata.Type, slLen, nil)
 	}
 }
 
@@ -309,7 +314,7 @@ func (r *splunkReceiver) handleReq(resp http.ResponseWriter, req *http.Request) 
 	}
 
 	if req.ContentLength == 0 {
-		resp.Write(okRespBody)
+		r.failRequest(ctx, resp, http.StatusBadRequest, noDataRespBody, 0, nil)
 		return
 	}
 
@@ -321,8 +326,25 @@ func (r *splunkReceiver) handleReq(resp http.ResponseWriter, req *http.Request) 
 		var msg splunk.Event
 		err := dec.Decode(&msg)
 		if err != nil {
-			r.failRequest(ctx, resp, http.StatusBadRequest, errUnmarshalBodyRespBody, len(events), err)
+			r.failRequest(ctx, resp, http.StatusBadRequest, invalidFormatRespBody, len(events), err)
 			return
+		}
+
+		if msg.Event == nil {
+			r.failRequest(ctx, resp, http.StatusBadRequest, eventRequiredRespBody, len(events), nil)
+			return
+		}
+
+		if msg.Event == "" {
+			r.failRequest(ctx, resp, http.StatusBadRequest, eventBlankRespBody, len(events), nil)
+			return
+		}
+
+		for _, v := range msg.Fields {
+			if !isFlatJSONField(v) {
+				r.failRequest(ctx, resp, http.StatusBadRequest, []byte(fmt.Sprintf(responseErrHandlingIndexedFields, len(events))), len(events), nil)
+				return
+			}
 		}
 		if msg.IsMetric() {
 			if r.metricsConsumer == nil {
@@ -348,13 +370,16 @@ func (r *splunkReceiver) consumeMetrics(ctx context.Context, events []*splunk.Ev
 	md, _ := splunkHecToMetricsData(r.settings.Logger, events, resourceCustomizer, r.config)
 
 	decodeErr := r.metricsConsumer.ConsumeMetrics(ctx, md)
-	r.obsrecv.EndMetricsOp(ctx, typeStr, len(events), decodeErr)
+	r.obsrecv.EndMetricsOp(ctx, metadata.Type, len(events), decodeErr)
 
 	if decodeErr != nil {
 		r.failRequest(ctx, resp, http.StatusInternalServerError, errInternalServerError, len(events), decodeErr)
 	} else {
-		resp.WriteHeader(http.StatusAccepted)
-		resp.Write(okRespBody)
+		resp.WriteHeader(http.StatusOK)
+		_, err := resp.Write(okRespBody)
+		if err != nil {
+			r.failRequest(ctx, resp, http.StatusInternalServerError, errInternalServerError, len(events), err)
+		}
 	}
 }
 
@@ -367,12 +392,14 @@ func (r *splunkReceiver) consumeLogs(ctx context.Context, events []*splunk.Event
 	}
 
 	decodeErr := r.logsConsumer.ConsumeLogs(ctx, ld)
-	r.obsrecv.EndLogsOp(ctx, typeStr, len(events), decodeErr)
+	r.obsrecv.EndLogsOp(ctx, metadata.Type, len(events), decodeErr)
 	if decodeErr != nil {
 		r.failRequest(ctx, resp, http.StatusInternalServerError, errInternalServerError, len(events), decodeErr)
 	} else {
-		resp.WriteHeader(http.StatusAccepted)
-		resp.Write(okRespBody)
+		resp.WriteHeader(http.StatusOK)
+		if _, err := resp.Write(okRespBody); err != nil {
+			r.failRequest(ctx, resp, http.StatusInternalServerError, errInternalServerError, len(events), err)
+		}
 	}
 }
 
@@ -382,7 +409,7 @@ func (r *splunkReceiver) createResourceCustomizer(req *http.Request) func(resour
 		if strings.HasPrefix(accessToken, splunk.HECTokenHeader+" ") {
 			accessTokenValue := accessToken[len(splunk.HECTokenHeader)+1:]
 			return func(resource pcommon.Resource) {
-				resource.Attributes().InsertString(splunk.HecTokenLabel, accessTokenValue)
+				resource.Attributes().PutStr(splunk.HecTokenLabel, accessTokenValue)
 			}
 		}
 	}
@@ -408,9 +435,9 @@ func (r *splunkReceiver) failRequest(
 	}
 
 	if r.metricsConsumer == nil {
-		r.obsrecv.EndLogsOp(ctx, typeStr, numRecordsReceived, err)
+		r.obsrecv.EndLogsOp(ctx, metadata.Type, numRecordsReceived, err)
 	} else {
-		r.obsrecv.EndMetricsOp(ctx, typeStr, numRecordsReceived, err)
+		r.obsrecv.EndMetricsOp(ctx, metadata.Type, numRecordsReceived, err)
 	}
 
 	if r.settings.Logger.Core().Enabled(zap.DebugLevel) {
@@ -424,6 +451,12 @@ func (r *splunkReceiver) failRequest(
 	}
 }
 
+func (r *splunkReceiver) handleHealthReq(writer http.ResponseWriter, _ *http.Request) {
+	writer.Header().Add("Content-Type", "application/json")
+	writer.WriteHeader(http.StatusOK)
+	_, _ = writer.Write([]byte(responseHecHealthy))
+}
+
 func initJSONResponse(s string) []byte {
 	respBody, err := jsoniter.Marshal(s)
 	if err != nil {
@@ -431,4 +464,19 @@ func initJSONResponse(s string) []byte {
 		panic(err)
 	}
 	return respBody
+}
+
+func isFlatJSONField(field interface{}) bool {
+	switch value := field.(type) {
+	case map[string]interface{}:
+		return false
+	case []interface{}:
+		for _, v := range value {
+			switch v.(type) {
+			case map[string]interface{}, []interface{}:
+				return false
+			}
+		}
+	}
+	return true
 }

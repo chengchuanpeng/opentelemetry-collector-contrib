@@ -1,16 +1,5 @@
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package alibabacloudlogserviceexporter // import "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/alibabacloudlogserviceexporter"
 
@@ -24,6 +13,8 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	conventions "go.opentelemetry.io/collector/semconv/v1.6.1"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal/traceutil"
 )
 
 const (
@@ -42,7 +33,7 @@ const (
 )
 
 func logDataToLogService(ld plog.Logs) []*sls.Log {
-	slsLogs := make([]*sls.Log, 0)
+	var slsLogs []*sls.Log
 	rls := ld.ResourceLogs()
 	for i := 0; i < rls.Len(); i++ {
 		rl := rls.At(i)
@@ -176,12 +167,12 @@ func mapLogRecordToLogService(lr plog.LogRecord,
 
 	contentsBuffer = append(contentsBuffer, sls.LogContent{
 		Key:   proto.String(traceIDField),
-		Value: proto.String(lr.TraceID().HexString()),
+		Value: proto.String(traceutil.TraceIDToHexOrEmptyString(lr.TraceID())),
 	})
 
 	contentsBuffer = append(contentsBuffer, sls.LogContent{
 		Key:   proto.String(spanIDField),
-		Value: proto.String(lr.SpanID().HexString()),
+		Value: proto.String(traceutil.SpanIDToHexOrEmptyString(lr.SpanID())),
 	})
 
 	for i := range contentsBuffer {

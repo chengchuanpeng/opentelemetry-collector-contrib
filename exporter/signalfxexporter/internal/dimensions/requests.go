@@ -1,40 +1,17 @@
-// Copyright OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package dimensions // import "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/signalfxexporter/internal/dimensions"
 
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
-
-	"go.uber.org/atomic"
+	"sync/atomic"
 )
 
 // ReqSender is a direct port of
@@ -57,7 +34,7 @@ func NewReqSender(ctx context.Context, client *http.Client,
 		requests:       make(chan *http.Request),
 		workerCount:    workerCount,
 		ctx:            ctx,
-		runningWorkers: atomic.NewInt64(0),
+		runningWorkers: &atomic.Int64{},
 	}
 }
 
@@ -104,7 +81,7 @@ func (rs *ReqSender) sendRequest(req *http.Request) error {
 	}
 
 	if err != nil {
-		err = fmt.Errorf("error making HTTP request to %s: %v", req.URL.String(), err)
+		err = fmt.Errorf("error making HTTP request to %s: %w", req.URL.String(), err)
 	} else {
 		err = fmt.Errorf("unexpected status code %d on response for request to %s: %s", statusCode, req.URL.String(), string(body))
 	}
@@ -147,6 +124,6 @@ func sendRequest(client *http.Client, req *http.Request) ([]byte, int, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	return body, resp.StatusCode, err
 }

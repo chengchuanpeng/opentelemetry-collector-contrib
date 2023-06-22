@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package opencensus
 
@@ -615,16 +604,16 @@ func generateOCTestMetricDoubleSummary() *ocmetrics.Metric {
 
 func generateResourceWithOcNodeAndResource() pcommon.Resource {
 	resource := pcommon.NewResource()
-	resource.Attributes().InsertString(occonventions.AttributeProcessStartTime, "2020-02-11T20:26:00Z")
-	resource.Attributes().InsertString(conventions.AttributeHostName, "host1")
-	resource.Attributes().InsertInt(conventions.AttributeProcessPID, 123)
-	resource.Attributes().InsertString(conventions.AttributeTelemetrySDKVersion, "v2.0.1")
-	resource.Attributes().InsertString(occonventions.AttributeExporterVersion, "v1.2.0")
-	resource.Attributes().InsertString(conventions.AttributeTelemetrySDKLanguage, "cpp")
-	resource.Attributes().InsertString(occonventions.AttributeResourceType, "good-resource")
-	resource.Attributes().InsertString("node-str-attr", "node-str-attr-val")
-	resource.Attributes().InsertString("resource-str-attr", "resource-str-attr-val")
-	resource.Attributes().InsertInt("resource-int-attr", 123)
+	resource.Attributes().PutStr(occonventions.AttributeProcessStartTime, "2020-02-11T20:26:00Z")
+	resource.Attributes().PutStr(conventions.AttributeHostName, "host1")
+	resource.Attributes().PutInt(conventions.AttributeProcessPID, 123)
+	resource.Attributes().PutStr(conventions.AttributeTelemetrySDKVersion, "v2.0.1")
+	resource.Attributes().PutStr(occonventions.AttributeExporterVersion, "v1.2.0")
+	resource.Attributes().PutStr(conventions.AttributeTelemetrySDKLanguage, "cpp")
+	resource.Attributes().PutStr(occonventions.AttributeResourceType, "good-resource")
+	resource.Attributes().PutStr("node-str-attr", "node-str-attr-val")
+	resource.Attributes().PutStr("resource-str-attr", "resource-str-attr-val")
+	resource.Attributes().PutInt("resource-int-attr", 123)
 	return resource
 }
 

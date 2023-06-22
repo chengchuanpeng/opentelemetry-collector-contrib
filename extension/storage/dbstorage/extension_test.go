@@ -1,24 +1,15 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
-// nolint:errcheck
+// Skip tests on Windows temporarily, see https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/11451
+//go:build !windows
+// +build !windows
+
 package dbstorage
 
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"sync"
 	"testing"
 
@@ -26,20 +17,23 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/component/componenttest"
-	"go.opentelemetry.io/collector/config"
 	"go.opentelemetry.io/collector/extension/experimental/storage"
+	"go.opentelemetry.io/collector/extension/extensiontest"
 )
 
 func TestExtensionIntegrity(t *testing.T) {
 	ctx := context.Background()
 	se := newTestExtension(t)
 	err := se.Start(context.Background(), componenttest.NewNopHost())
-	defer se.Shutdown(context.Background())
 	assert.NoError(t, err)
+	defer func() {
+		err = se.Shutdown(context.Background())
+		assert.NoError(t, err)
+	}()
 
 	type mockComponent struct {
 		kind component.Kind
-		name config.ComponentID
+		name component.ID
 	}
 
 	components := []mockComponent{
@@ -54,14 +48,14 @@ func TestExtensionIntegrity(t *testing.T) {
 	}
 
 	// Make a client for each component
-	clients := make(map[config.ComponentID]storage.Client)
+	clients := make(map[component.ID]storage.Client)
 	for _, c := range components {
 		client, err := se.GetClient(ctx, c.kind, c.name, "")
 		require.NoError(t, err)
 		clients[c.name] = client
 	}
 
-	thrashClient := func(wg *sync.WaitGroup, n config.ComponentID, c storage.Client) {
+	thrashClient := func(wg *sync.WaitGroup, n component.ID, c storage.Client) {
 		// keys and values
 		keys := []string{"a", "b", "c", "d", "e"}
 		myBytes := []byte(n.Name())
@@ -108,15 +102,12 @@ func TestExtensionIntegrity(t *testing.T) {
 }
 
 func newTestExtension(t *testing.T) storage.Extension {
-	tempDir, err := ioutil.TempDir("", "")
-	require.NoError(t, err)
-
 	f := NewFactory()
 	cfg := f.CreateDefaultConfig().(*Config)
 	cfg.DriverName = "sqlite3"
-	cfg.DataSource = fmt.Sprintf("file:%s/foo.db?_busy_timeout=10000&_journal=WAL&_sync=NORMAL", tempDir)
+	cfg.DataSource = fmt.Sprintf("file:%s/foo.db?_busy_timeout=10000&_journal=WAL&_sync=NORMAL", t.TempDir())
 
-	extension, err := f.CreateExtension(context.Background(), componenttest.NewNopExtensionCreateSettings(), cfg)
+	extension, err := f.CreateExtension(context.Background(), extensiontest.NewNopCreateSettings(), cfg)
 	require.NoError(t, err)
 
 	se, ok := extension.(storage.Extension)
@@ -125,6 +116,6 @@ func newTestExtension(t *testing.T) storage.Extension {
 	return se
 }
 
-func newTestEntity(name string) config.ComponentID {
-	return config.NewComponentIDWithName("nop", name)
+func newTestEntity(name string) component.ID {
+	return component.NewIDWithName("nop", name)
 }

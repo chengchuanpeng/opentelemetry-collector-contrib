@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package zipkinreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/zipkinreceiver"
 
@@ -20,18 +9,16 @@ import (
 	"context"
 	"errors"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
 
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/component/componenterror"
-	"go.opentelemetry.io/collector/config"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/obsreport"
 	"go.opentelemetry.io/collector/pdata/ptrace"
+	"go.opentelemetry.io/collector/receiver"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/zipkin/zipkinv1"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/zipkin/zipkinv2"
@@ -49,7 +36,6 @@ var errNextConsumerRespBody = []byte(`"Internal Server Error"`)
 // zipkinReceiver type is used to handle spans received in the Zipkin format.
 type zipkinReceiver struct {
 	nextConsumer consumer.Traces
-	id           config.ComponentID
 
 	shutdownWG sync.WaitGroup
 	server     *http.Server
@@ -61,20 +47,34 @@ type zipkinReceiver struct {
 	protobufUnmarshaler      ptrace.Unmarshaler
 	protobufDebugUnmarshaler ptrace.Unmarshaler
 
-	settings component.ReceiverCreateSettings
+	settings  receiver.CreateSettings
+	obsrecvrs map[string]*obsreport.Receiver
 }
 
 var _ http.Handler = (*zipkinReceiver)(nil)
 
 // newReceiver creates a new zipkinReceiver reference.
-func newReceiver(config *Config, nextConsumer consumer.Traces, settings component.ReceiverCreateSettings) (*zipkinReceiver, error) {
+func newReceiver(config *Config, nextConsumer consumer.Traces, settings receiver.CreateSettings) (*zipkinReceiver, error) {
 	if nextConsumer == nil {
-		return nil, componenterror.ErrNilNextConsumer
+		return nil, component.ErrNilNextConsumer
+	}
+
+	transports := []string{receiverTransportV1Thrift, receiverTransportV1JSON, receiverTransportV2JSON, receiverTransportV2PROTO}
+	obsrecvrs := make(map[string]*obsreport.Receiver)
+	for _, transport := range transports {
+		obsrecv, err := obsreport.NewReceiver(obsreport.ReceiverSettings{
+			ReceiverID:             settings.ID,
+			Transport:              transport,
+			ReceiverCreateSettings: settings,
+		})
+		if err != nil {
+			return nil, err
+		}
+		obsrecvrs[transport] = obsrecv
 	}
 
 	zr := &zipkinReceiver{
 		nextConsumer:             nextConsumer,
-		id:                       config.ID(),
 		config:                   config,
 		v1ThriftUnmarshaler:      zipkinv1.NewThriftTracesUnmarshaler(),
 		v1JSONUnmarshaler:        zipkinv1.NewJSONTracesUnmarshaler(config.ParseStringTags),
@@ -82,6 +82,7 @@ func newReceiver(config *Config, nextConsumer consumer.Traces, settings componen
 		protobufUnmarshaler:      zipkinv2.NewProtobufTracesUnmarshaler(false, config.ParseStringTags),
 		protobufDebugUnmarshaler: zipkinv2.NewProtobufTracesUnmarshaler(true, config.ParseStringTags),
 		settings:                 settings,
+		obsrecvrs:                obsrecvrs,
 	}
 	return zr, nil
 }
@@ -149,7 +150,10 @@ func (zr *zipkinReceiver) v2ToTraceSpans(blob []byte, hdr http.Header) (reqs ptr
 // giving it a chance to perform any necessary clean-up and shutting down
 // its HTTP server.
 func (zr *zipkinReceiver) Shutdown(context.Context) error {
-	err := zr.server.Close()
+	var err error
+	if zr.server != nil {
+		err = zr.server.Close()
+	}
 	zr.shutdownWG.Wait()
 	return err
 }
@@ -158,7 +162,8 @@ func (zr *zipkinReceiver) Shutdown(context.Context) error {
 // a compression such as "gzip", "deflate", "zlib", is found, the body will
 // be uncompressed accordingly or return the body untouched if otherwise.
 // Clients such as Zipkin-Java do this behavior e.g.
-//    send "Content-Encoding":"gzip" of the JSON content.
+//
+//	send "Content-Encoding":"gzip" of the JSON content.
 func processBodyIfNecessary(req *http.Request) io.Reader {
 	switch req.Header.Get("Content-Encoding") {
 	default:
@@ -204,15 +209,11 @@ func (zr *zipkinReceiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	asZipkinv1 := r.URL != nil && strings.Contains(r.URL.Path, "api/v1/spans")
 
 	transportTag := transportType(r, asZipkinv1)
-	obsrecv := obsreport.NewReceiver(obsreport.ReceiverSettings{
-		ReceiverID:             zr.id,
-		Transport:              transportTag,
-		ReceiverCreateSettings: zr.settings,
-	})
+	obsrecv := zr.obsrecvrs[transportTag]
 	ctx = obsrecv.StartTracesOp(ctx)
 
 	pr := processBodyIfNecessary(r)
-	slurp, _ := ioutil.ReadAll(pr)
+	slurp, _ := io.ReadAll(pr)
 	if c, ok := pr.(io.Closer); ok {
 		_ = c.Close()
 	}
@@ -242,7 +243,7 @@ func (zr *zipkinReceiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if consumerErr != nil {
 		// Transient error, due to some internal condition.
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write(errNextConsumerRespBody) // nolint:errcheck
+		_, _ = w.Write(errNextConsumerRespBody)
 		return
 	}
 

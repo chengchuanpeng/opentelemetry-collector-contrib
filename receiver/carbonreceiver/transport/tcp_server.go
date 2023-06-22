@@ -1,22 +1,12 @@
-// Copyright 2019, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package transport // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/carbonreceiver/transport"
 
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -24,11 +14,10 @@ import (
 	"sync"
 	"time"
 
-	metricspb "github.com/census-instrumentation/opencensus-proto/gen-go/metrics/v1"
 	"go.opencensus.io/trace"
 	"go.opentelemetry.io/collector/consumer"
+	"go.opentelemetry.io/collector/pdata/pmetric"
 
-	internaldata "github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/opencensus"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/carbonreceiver/protocol"
 )
 
@@ -102,13 +91,14 @@ func (t *tcpServer) ListenAndServe(
 			continue
 		}
 
-		if netErr, ok := acceptErr.(net.Error); ok {
+		var netErr net.Error
+		if errors.As(acceptErr, &netErr) {
 			t.reporter.OnDebugf(
 				"TCP Transport (%s) - Accept (temporary=%v) net.Error: %v",
 				t.ln.Addr().String(),
-				netErr.Temporary(), // nolint SA1019
+				netErr.Timeout(),
 				netErr)
-			if netErr.Temporary() { // nolint SA1019
+			if netErr.Timeout() {
 				continue
 			}
 		}
@@ -177,14 +167,16 @@ func (t *tcpServer) handleConnection(
 		line := strings.TrimSpace(string(bytes))
 		if line != "" {
 			numReceivedMetricPoints++
-			var metric *metricspb.Metric
+			var metric pmetric.Metric
 			metric, err = p.Parse(line)
 			if err != nil {
 				t.reporter.OnTranslationError(ctx, err)
 				continue
 			}
-
-			err = nextConsumer.ConsumeMetrics(ctx, internaldata.OCToMetrics(nil, nil, []*metricspb.Metric{metric}))
+			metrics := pmetric.NewMetrics()
+			newMetric := metrics.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty().Metrics().AppendEmpty()
+			metric.MoveTo(newMetric)
+			err = nextConsumer.ConsumeMetrics(ctx, metrics)
 			t.reporter.OnMetricsProcessed(ctx, numReceivedMetricPoints, err)
 			if err != nil {
 				// The protocol doesn't account for returning errors.
@@ -196,19 +188,17 @@ func (t *tcpServer) handleConnection(
 			}
 		}
 
-		if netErr, ok := err.(*net.OpError); ok {
-			t.reporter.OnDebugf(
-				"TCP Transport (%s) - net.OpError: %v",
-				t.ln.Addr(),
-				netErr)
-			if !netErr.Temporary() || netErr.Timeout() {
+		netErr := &net.OpError{}
+		if errors.As(err, &netErr) {
+			t.reporter.OnDebugf("TCP Transport (%s) - net.OpError: %v", t.ln.Addr(), netErr)
+			if netErr.Timeout() {
 				// We want to end on timeout so idle connections are purged.
 				span.End()
 				return
 			}
 		}
 
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			t.reporter.OnDebugf(
 				"TCP Transport (%s) - error: %v",
 				t.ln.Addr(),

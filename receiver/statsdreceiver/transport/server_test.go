@@ -1,16 +1,5 @@
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package transport
 
@@ -20,6 +9,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,18 +21,14 @@ import (
 )
 
 func Test_Server_ListenAndServe(t *testing.T) {
-	t.Skip("Test is unstable, see https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/1426")
-
 	tests := []struct {
 		name          string
 		buildServerFn func(addr string) (Server, error)
 		buildClientFn func(host string, port int) (*client.StatsD, error)
 	}{
 		{
-			name: "udp",
-			buildServerFn: func(addr string) (Server, error) {
-				return NewUDPServer(addr)
-			},
+			name:          "udp",
+			buildServerFn: NewUDPServer,
 			buildClientFn: func(host string, port int) (*client.StatsD, error) {
 				return client.NewStatsD(client.UDP, host, port)
 			},
@@ -50,7 +36,21 @@ func Test_Server_ListenAndServe(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			addr := testutil.GetAvailableLocalAddress(t)
+			addr := testutil.GetAvailableLocalNetworkAddress(t, "udp")
+
+			// Endpoint should be free.
+			ln0, err := net.ListenPacket("udp", addr)
+			require.NoError(t, err)
+			require.NotNil(t, ln0)
+
+			// Ensure that the endpoint wasn't something like ":0" by checking that a second listener will fail.
+			ln1, err := net.ListenPacket("udp", addr)
+			require.Error(t, err)
+			require.Nil(t, ln1)
+
+			// Unbind the local address so the mock UDP service can use it
+			ln0.Close()
+
 			srv, err := tt.buildServerFn(addr)
 			require.NoError(t, err)
 			require.NotNil(t, srv)
@@ -64,7 +64,7 @@ func Test_Server_ListenAndServe(t *testing.T) {
 			p := &protocol.StatsDParser{}
 			require.NoError(t, err)
 			mr := NewMockReporter(1)
-			var transferChan = make(chan string, 10)
+			transferChan := make(chan Metric, 10)
 
 			wgListenAndServe := sync.WaitGroup{}
 			wgListenAndServe.Add(1)
@@ -78,7 +78,6 @@ func Test_Server_ListenAndServe(t *testing.T) {
 			gc, err := tt.buildClientFn(host, port)
 			require.NoError(t, err)
 			require.NotNil(t, gc)
-
 			err = gc.SendMetric(client.Metric{
 				Name:  "test.metric",
 				Value: "42",
@@ -86,10 +85,15 @@ func Test_Server_ListenAndServe(t *testing.T) {
 			})
 			assert.NoError(t, err)
 			runtime.Gosched()
-
 			err = gc.Disconnect()
 			assert.NoError(t, err)
 
+			// Keep trying until we're timed out or got a result
+			assert.Eventually(t, func() bool {
+				return len(transferChan) > 0
+			}, 10*time.Second, 500*time.Millisecond)
+
+			// Close the server connection, this will cause ListenAndServer to error out and the deferred wgListenAndServe.Done will fire
 			err = srv.Close()
 			assert.NoError(t, err)
 

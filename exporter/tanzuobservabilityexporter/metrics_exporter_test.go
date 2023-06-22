@@ -1,29 +1,19 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
-// nolint:errcheck
 package tanzuobservabilityexporter
 
 import (
 	"context"
 	"errors"
+	"log"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/component/componenttest"
+	"go.opentelemetry.io/collector/exporter"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
+	"go.opentelemetry.io/collector/exporter/exportertest"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 )
 
@@ -36,7 +26,7 @@ func TestPushMetricsDataErrorOnSend(t *testing.T) {
 }
 
 func verifyPushMetricsData(t *testing.T, errorOnSend bool) error {
-	metric := newMetric("test.metric", pmetric.MetricDataTypeGauge)
+	metric := newMetric("test.metric", pmetric.MetricTypeGauge)
 	dataPoints := metric.Gauge().DataPoints()
 	dataPoints.EnsureCapacity(1)
 	addDataPoint(
@@ -58,28 +48,30 @@ func verifyPushMetricsData(t *testing.T, errorOnSend bool) error {
 }
 
 func createMockMetricsExporter(
-	sender *mockMetricSender) (component.MetricsExporter, error) {
-	cfg := createDefaultConfig()
-	ourConfig := cfg.(*Config)
-	ourConfig.Metrics.Endpoint = "http://localhost:2878"
+	sender *mockMetricSender) (exporter.Metrics, error) {
+	exporterConfig := createDefaultConfig()
+	tobsConfig := exporterConfig.(*Config)
+	tobsConfig.Metrics.Endpoint = "http://localhost:2878"
 	creator := func(
-		hostName string, port int, settings component.TelemetrySettings, otelVersion string) (*metricsConsumer, error) {
+		metricsConfig MetricsConfig, settings component.TelemetrySettings, otelVersion string) (*metricsConsumer, error) {
 		return newMetricsConsumer(
 			[]typedMetricConsumer{
 				newGaugeConsumer(sender, settings),
 			},
 			sender,
 			false,
+			tobsConfig.Metrics,
 		), nil
 	}
 
-	exp, err := newMetricsExporter(componenttest.NewNopExporterCreateSettings(), cfg, creator)
+	exp, err := newMetricsExporter(exportertest.NewNopCreateSettings(), exporterConfig, creator)
 	if err != nil {
 		return nil, err
 	}
 	return exporterhelper.NewMetricsExporter(
-		cfg,
-		componenttest.NewNopExporterCreateSettings(),
+		context.Background(),
+		exportertest.NewNopCreateSettings(),
+		exporterConfig,
 		exp.pushMetricsData,
 		exporterhelper.WithShutdown(exp.shutdown),
 	)
@@ -91,7 +83,11 @@ func consumeMetrics(metrics pmetric.Metrics, sender *mockMetricSender) error {
 	if err != nil {
 		return err
 	}
-	defer mockOTelMetricsExporter.Shutdown(ctx)
+	defer func() {
+		if err := mockOTelMetricsExporter.Shutdown(ctx); err != nil {
+			log.Fatalln(err)
+		}
+	}()
 	return mockOTelMetricsExporter.ConsumeMetrics(ctx, metrics)
 }
 

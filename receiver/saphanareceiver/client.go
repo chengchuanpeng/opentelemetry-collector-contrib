@@ -1,18 +1,6 @@
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
-// nolint:errcheck
 package saphanareceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/saphanareceiver"
 
 import (
@@ -124,8 +112,8 @@ func (c *sapHanaClient) Connect(ctx context.Context) error {
 		return fmt.Errorf("error generating TLS config for SAP HANA connection: %w", err)
 	}
 	connector.SetTLSConfig(tls)
-
 	connector.SetApplicationName("OpenTelemetry Collector")
+
 	client := c.connectionFactory.getConnection(connector)
 
 	err = client.PingContext(ctx)
@@ -155,7 +143,7 @@ func (c *sapHanaClient) collectDataFromQuery(ctx context.Context, query *monitor
 	defer rows.Close()
 
 	errors := scrapererror.ScrapeErrors{}
-	data := []map[string]string{}
+	var data []map[string]string
 
 ROW_ITERATOR:
 	for rows.Next() {

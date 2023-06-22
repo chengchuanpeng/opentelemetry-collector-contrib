@@ -1,35 +1,25 @@
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package kubeletstatsreceiver
 
 import (
 	"context"
 	"errors"
-	"io/ioutil"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/pdata/pcommon"
+	"go.opentelemetry.io/collector/receiver/receivertest"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/kubeletstatsreceiver/internal/kubelet"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/kubeletstatsreceiver/internal/metadata"
 )
 
 const (
@@ -61,8 +51,9 @@ func TestScraper(t *testing.T) {
 	}
 	r, err := newKubletScraper(
 		&fakeRestClient{},
-		componenttest.NewNopReceiverCreateSettings(),
+		receivertest.NewNopCreateSettings(),
 		options,
+		metadata.DefaultMetricsBuilderConfig(),
 	)
 	require.NoError(t, err)
 
@@ -110,8 +101,9 @@ func TestScraperWithMetadata(t *testing.T) {
 			}
 			r, err := newKubletScraper(
 				&fakeRestClient{},
-				componenttest.NewNopReceiverCreateSettings(),
+				receivertest.NewNopCreateSettings(),
 				options,
+				metadata.DefaultMetricsBuilderConfig(),
 			)
 			require.NoError(t, err)
 
@@ -190,11 +182,12 @@ func TestScraperWithMetricGroups(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			r, err := newKubletScraper(
 				&fakeRestClient{},
-				componenttest.NewNopReceiverCreateSettings(),
+				receivertest.NewNopCreateSettings(),
 				&scraperOptions{
 					extraMetadataLabels:   []kubelet.MetadataLabel{kubelet.MetadataLabelContainerID},
 					metricGroupsToCollect: test.metricGroups,
 				},
+				metadata.DefaultMetricsBuilderConfig(),
 			)
 			require.NoError(t, err)
 
@@ -336,7 +329,7 @@ func TestScraperWithPVCDetailedLabels(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			r, err := newKubletScraper(
 				&fakeRestClient{},
-				componenttest.NewNopReceiverCreateSettings(),
+				receivertest.NewNopCreateSettings(),
 				&scraperOptions{
 					extraMetadataLabels: []kubelet.MetadataLabel{kubelet.MetadataLabelVolumeType},
 					metricGroupsToCollect: map[kubelet.MetricGroup]bool{
@@ -344,6 +337,7 @@ func TestScraperWithPVCDetailedLabels(t *testing.T) {
 					},
 					k8sAPIClient: test.k8sAPIClient,
 				},
+				metadata.DefaultMetricsBuilderConfig(),
 			)
 			require.NoError(t, err)
 
@@ -363,7 +357,7 @@ func TestScraperWithPVCDetailedLabels(t *testing.T) {
 						continue
 					}
 
-					ev := test.expectedVolumes[claimName.StringVal()]
+					ev := test.expectedVolumes[claimName.Str()]
 					requireExpectedVolume(t, ev, resource)
 
 					// Assert metrics from certain volume claims expected to be missed
@@ -371,7 +365,7 @@ func TestScraperWithPVCDetailedLabels(t *testing.T) {
 					if test.volumeClaimsToMiss != nil {
 						for c := range test.volumeClaimsToMiss {
 							val, ok := resource.Attributes().Get("k8s.persistentvolumeclaim.name")
-							require.True(t, !ok || val.StringVal() != c)
+							require.True(t, !ok || val.Str() != c)
 						}
 					}
 				}
@@ -393,7 +387,7 @@ func requireExpectedVolume(t *testing.T, ev expectedVolume, resource pcommon.Res
 func requireAttribute(t *testing.T, attr pcommon.Map, key string, value string) {
 	val, ok := attr.Get(key)
 	require.True(t, ok)
-	require.Equal(t, value, val.StringVal())
+	require.Equal(t, value, val.Str())
 
 }
 
@@ -443,7 +437,7 @@ func TestClientErrors(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			core, observedLogs := observer.New(zap.ErrorLevel)
 			logger := zap.New(core)
-			settings := componenttest.NewNopReceiverCreateSettings()
+			settings := receivertest.NewNopCreateSettings()
 			settings.Logger = logger
 			options := &scraperOptions{
 				extraMetadataLabels:   test.extraMetadataLabels,
@@ -456,6 +450,7 @@ func TestClientErrors(t *testing.T) {
 				},
 				settings,
 				options,
+				metadata.DefaultMetricsBuilderConfig(),
 			)
 			require.NoError(t, err)
 
@@ -481,12 +476,12 @@ func (f *fakeRestClient) StatsSummary() ([]byte, error) {
 	if f.statsSummaryFail {
 		return nil, errors.New("")
 	}
-	return ioutil.ReadFile("testdata/stats-summary.json")
+	return os.ReadFile("testdata/stats-summary.json")
 }
 
 func (f *fakeRestClient) Pods() ([]byte, error) {
 	if f.podsFail {
 		return nil, errors.New("")
 	}
-	return ioutil.ReadFile("testdata/pods.json")
+	return os.ReadFile("testdata/pods.json")
 }

@@ -1,16 +1,5 @@
-// Copyright 2019, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package cloudfoundryreceiver
 
@@ -22,67 +11,76 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/collector/component/componenttest"
-	"go.opentelemetry.io/collector/config"
+	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/confighttp"
 	"go.opentelemetry.io/collector/config/configtls"
-	"go.opentelemetry.io/collector/service/servicetest"
+	"go.opentelemetry.io/collector/confmap/confmaptest"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/cloudfoundryreceiver/internal/metadata"
 )
 
 func TestLoadConfig(t *testing.T) {
-	factories, err := componenttest.NopFactories()
+	t.Parallel()
+
+	cm, err := confmaptest.LoadConf(filepath.Join("testdata", "config.yaml"))
 	require.NoError(t, err)
 
-	factory := NewFactory()
-	factories.Receivers[typeStr] = factory
-	cfg, err := servicetest.LoadConfigAndValidate(filepath.Join("testdata", "config.yaml"), factories)
-
-	require.NoError(t, err)
-	require.NotNil(t, cfg)
-
-	require.Len(t, cfg.Receivers, 2)
-
-	r0 := cfg.Receivers[config.NewComponentID(typeStr)]
-	defaultConfig := factory.CreateDefaultConfig().(*Config)
-	defaultConfig.UAA.Password = "test"
-	assert.Equal(t, defaultConfig, r0)
-
-	r1 := cfg.Receivers[config.NewComponentIDWithName(typeStr, "one")].(*Config)
-	assert.Equal(t,
-		&Config{
-			ReceiverSettings: config.NewReceiverSettings(config.NewComponentIDWithName(typeStr, "one")),
-			RLPGateway: RLPGatewayConfig{
-				HTTPClientSettings: confighttp.HTTPClientSettings{
-					Endpoint: "https://log-stream.sys.example.internal",
-					TLSSetting: configtls.TLSClientSetting{
-						InsecureSkipVerify: true,
+	tests := []struct {
+		id           component.ID
+		expected     component.Config
+		errorMessage string
+	}{
+		{
+			id: component.NewIDWithName(metadata.Type, "one"),
+			expected: &Config{
+				RLPGateway: RLPGatewayConfig{
+					HTTPClientSettings: confighttp.HTTPClientSettings{
+						Endpoint: "https://log-stream.sys.example.internal",
+						TLSSetting: configtls.TLSClientSetting{
+							InsecureSkipVerify: true,
+						},
+						Timeout: time.Second * 20,
 					},
-					Timeout: time.Second * 20,
+					ShardID: "otel-test",
 				},
-				ShardID: "otel-test",
-			},
-			UAA: UAAConfig{
-				LimitedHTTPClientSettings: LimitedHTTPClientSettings{
-					Endpoint: "https://uaa.sys.example.internal",
-					TLSSetting: LimitedTLSClientSetting{
-						InsecureSkipVerify: true,
+				UAA: UAAConfig{
+					LimitedHTTPClientSettings: LimitedHTTPClientSettings{
+						Endpoint: "https://uaa.sys.example.internal",
+						TLSSetting: LimitedTLSClientSetting{
+							InsecureSkipVerify: true,
+						},
 					},
+					Username: "admin",
+					Password: "test",
 				},
-				Username: "admin",
-				Password: "test",
 			},
-		}, r1)
-}
+		},
+		{
+			id:           component.NewIDWithName(metadata.Type, "empty"),
+			errorMessage: "UAA password not specified",
+		},
+		{
+			id:           component.NewIDWithName(metadata.Type, "invalid"),
+			errorMessage: "failed to parse rlp_gateway.endpoint as url: parse \"https://[invalid\": missing ']' in host",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id.String(), func(t *testing.T) {
+			factory := NewFactory()
+			cfg := factory.CreateDefaultConfig()
 
-func TestLoadInvalidConfig(t *testing.T) {
-	factories, err := componenttest.NopFactories()
-	require.NoError(t, err)
+			sub, err := cm.Sub(tt.id.String())
+			require.NoError(t, err)
+			require.NoError(t, component.UnmarshalConfig(sub, cfg))
 
-	factory := NewFactory()
-	factories.Receivers[typeStr] = factory
-	_, err = servicetest.LoadConfigAndValidate(filepath.Join("testdata", "config-invalid.yaml"), factories)
-
-	require.Error(t, err)
+			if tt.expected == nil {
+				assert.EqualError(t, component.ValidateConfig(cfg), tt.errorMessage)
+				return
+			}
+			assert.NoError(t, component.ValidateConfig(cfg))
+			assert.Equal(t, tt.expected, cfg)
+		})
+	}
 }
 
 func TestInvalidConfigValidation(t *testing.T) {

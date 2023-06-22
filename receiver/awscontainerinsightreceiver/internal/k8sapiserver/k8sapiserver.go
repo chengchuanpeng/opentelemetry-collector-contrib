@@ -1,16 +1,5 @@
-// Copyright  OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package k8sapiserver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver/internal/k8sapiserver"
 
@@ -69,7 +58,7 @@ type K8sClient interface {
 
 // K8sAPIServer is a struct that produces metrics from kubernetes api server
 type K8sAPIServer struct {
-	nodeName            string //get the value from downward API
+	nodeName            string // get the value from downward API
 	logger              *zap.Logger
 	clusterNameProvider clusterNameProvider
 	cancel              context.CancelFunc
@@ -77,7 +66,7 @@ type K8sAPIServer struct {
 	mu      sync.Mutex
 	leading bool
 
-	k8sClient  K8sClient //*k8sclient.K8sClient
+	k8sClient  K8sClient // *k8sclient.K8sClient
 	epClient   k8sclient.EpClient
 	nodeClient k8sclient.NodeClient
 	podClient  k8sclient.PodClient
@@ -112,7 +101,7 @@ func New(clusterNameProvider clusterNameProvider, logger *zap.Logger, options ..
 	}
 
 	if err := k.init(); err != nil {
-		return nil, fmt.Errorf("fail to initialize k8sapiserver, err: %v", err)
+		return nil, fmt.Errorf("fail to initialize k8sapiserver, err: %w", err)
 	}
 
 	return k, nil
@@ -308,7 +297,7 @@ func (k *K8sAPIServer) startLeaderElection(ctx context.Context, lock resourceloc
 					k.mu.Lock()
 					defer k.mu.Unlock()
 					k.leading = false
-					//node and pod are only used for cluster level metrics, endpoint is used for decorator too.
+					// node and pod are only used for cluster level metrics, endpoint is used for decorator too.
 					k.k8sClient.ShutdownNodeClient()
 					k.k8sClient.ShutdownPodClient()
 				},
@@ -319,7 +308,7 @@ func (k *K8sAPIServer) startLeaderElection(ctx context.Context, lock resourceloc
 		})
 
 		select {
-		case <-ctx.Done(): //when leader election ends, the channel ctx.Done() will be closed
+		case <-ctx.Done(): // when leader election ends, the channel ctx.Done() will be closed
 			k.logger.Info(fmt.Sprintf("k8sapiserver shutdown Leader Election: %s", k.nodeName))
 			return
 		default:

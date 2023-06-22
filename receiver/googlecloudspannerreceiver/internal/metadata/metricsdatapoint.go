@@ -1,22 +1,14 @@
-// Copyright  The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package metadata // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/googlecloudspannerreceiver/internal/metadata"
 
 import (
 	"fmt"
+	"hash/fnv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mitchellh/hashstructure"
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -33,9 +25,9 @@ const (
 )
 
 type MetricsDataPointKey struct {
-	MetricName     string
-	MetricUnit     string
-	MetricDataType MetricDataType
+	MetricName string
+	MetricUnit string
+	MetricType MetricType
 }
 
 type MetricsDataPoint struct {
@@ -64,21 +56,20 @@ func (mdp *MetricsDataPoint) CopyTo(dataPoint pmetric.NumberDataPoint) {
 	mdp.metricValue.SetValueTo(dataPoint)
 
 	attributes := dataPoint.Attributes()
-
-	for _, labelValue := range mdp.labelValues {
-		labelValue.SetValueTo(attributes)
+	attributes.EnsureCapacity(3 + len(mdp.labelValues))
+	attributes.PutStr(projectIDLabelName, mdp.databaseID.ProjectID())
+	attributes.PutStr(instanceIDLabelName, mdp.databaseID.InstanceID())
+	attributes.PutStr(databaseLabelName, mdp.databaseID.DatabaseName())
+	for i := range mdp.labelValues {
+		mdp.labelValues[i].SetValueTo(attributes)
 	}
-
-	dataPoint.Attributes().InsertString(projectIDLabelName, mdp.databaseID.ProjectID())
-	dataPoint.Attributes().InsertString(instanceIDLabelName, mdp.databaseID.InstanceID())
-	dataPoint.Attributes().InsertString(databaseLabelName, mdp.databaseID.DatabaseName())
 }
 
 func (mdp *MetricsDataPoint) GroupingKey() MetricsDataPointKey {
 	return MetricsDataPointKey{
-		MetricName:     mdp.metricName,
-		MetricUnit:     mdp.metricValue.Metadata().Unit(),
-		MetricDataType: mdp.metricValue.Metadata().DataType(),
+		MetricName: mdp.metricName,
+		MetricUnit: mdp.metricValue.Metadata().Unit(),
+		MetricType: mdp.metricValue.Metadata().DataType(),
 	}
 }
 
@@ -112,6 +103,76 @@ func (mdp *MetricsDataPoint) toDataForHashing() dataForHashing {
 	return dataForHashing{
 		MetricName: mdp.metricName,
 		Labels:     labels,
+	}
+}
+
+// Convert row_range_start_key label of top-lock-stats metric from format "sample(key1, key2)" to "sample(hash1, hash2)"
+func parseAndHashRowrangestartkey(key string) string {
+	builderHashedKey := strings.Builder{}
+	startIndexKeys := strings.Index(key, "(")
+	if startIndexKeys == -1 || startIndexKeys == len(key)-1 { // if "(" does not exist or is the last character of the string, then label is of incorrect format
+		return ""
+	}
+	substring := key[startIndexKeys+1 : len(key)-1]
+	builderHashedKey.WriteString(key[:startIndexKeys+1])
+	plusPresent := false
+	if substring[len(substring)-1] == '+' {
+		substring = substring[:len(substring)-1]
+		plusPresent = true
+	}
+	keySlice := strings.Split(substring, ",")
+	hashFunction := fnv.New32a()
+	for cnt, subKey := range keySlice {
+		hashFunction.Reset()
+		hashFunction.Write([]byte(subKey))
+		if cnt < len(keySlice)-1 {
+			builderHashedKey.WriteString(fmt.Sprint(hashFunction.Sum32()) + ",")
+		} else {
+			builderHashedKey.WriteString(fmt.Sprint(hashFunction.Sum32()))
+		}
+	}
+	if plusPresent {
+		builderHashedKey.WriteString("+")
+	}
+	builderHashedKey.WriteString(")")
+	return builderHashedKey.String()
+}
+
+func (mdp *MetricsDataPoint) HideLockStatsRowrangestartkeyPII() {
+	for index, labelValue := range mdp.labelValues {
+		if labelValue.Metadata().Name() == "row_range_start_key" {
+			key := labelValue.Value().(string)
+			hashedKey := parseAndHashRowrangestartkey(key)
+			v := mdp.labelValues[index].(byteSliceLabelValue)
+			p := &v
+			p.ModifyValue(hashedKey)
+			mdp.labelValues[index] = v
+		}
+	}
+}
+
+func TruncateString(str string, length int) string {
+	if length <= 0 {
+		return ""
+	}
+
+	if utf8.RuneCountInString(str) < length {
+		return str
+	}
+
+	return string([]rune(str)[:length])
+}
+
+func (mdp *MetricsDataPoint) TruncateQueryText(length int) {
+	for index, labelValue := range mdp.labelValues {
+		if labelValue.Metadata().Name() == "query_text" {
+			queryText := labelValue.Value().(string)
+			truncateQueryText := TruncateString(queryText, length)
+			v := mdp.labelValues[index].(stringLabelValue)
+			p := &v
+			p.ModifyValue(truncateQueryText)
+			mdp.labelValues[index] = v
+		}
 	}
 }
 

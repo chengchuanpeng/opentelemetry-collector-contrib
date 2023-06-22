@@ -1,26 +1,14 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package sigv4authextension // import "github.com/open-telemetry/opentelemetry-collector-contrib/extension/sigv4authextension"
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"strings"
 	"time"
@@ -29,6 +17,8 @@ import (
 	sigv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"go.uber.org/zap"
 )
+
+var errNilRequest = errors.New("sigv4: unable to sign nil *http.Request")
 
 // signingRoundTripper is a custom RoundTripper that performs AWS Sigv4.
 type signingRoundTripper struct {
@@ -44,17 +34,26 @@ type signingRoundTripper struct {
 // RoundTrip() executes a single HTTP transaction and returns an HTTP response, signing
 // the request with Sigv4.
 func (si *signingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	reqBody, err := req.GetBody()
+	if req == nil {
+		si.logger.Warn("nil *http.Request encountered")
+		return nil, errNilRequest
+	}
+
+	req2, err := si.signRequest(req)
 	if err != nil {
+		si.logger.Debug("error signing request", zap.Error(err))
 		return nil, err
 	}
 
-	content, err := ioutil.ReadAll(reqBody)
-	reqBody.Close()
+	// Send the request
+	return si.transport.RoundTrip(req2)
+}
+
+func (si *signingRoundTripper) signRequest(req *http.Request) (*http.Request, error) {
+	payloadHash, err := hashPayload(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to hash request body: %w", err)
 	}
-	body := bytes.NewReader(content)
 
 	// Clone request to ensure thread safety.
 	req2 := cloneRequest(req)
@@ -68,24 +67,44 @@ func (si *signingRoundTripper) RoundTrip(req *http.Request) (*http.Response, err
 	}
 	req2.Header.Set("User-Agent", ua)
 
-	// Hash the request
-	h := sha256.New()
-	_, _ = io.Copy(h, body)
-	payloadHash := hex.EncodeToString(h.Sum(nil))
-
 	// Use user provided service/region if specified, use inferred service/region if not, then sign the request
-	service, region := si.inferServiceAndRegion(req)
-	creds, err := (*si.credsProvider).Retrieve(req.Context())
-	if err != nil {
-		return nil, errBadCreds
+	service, region := si.inferServiceAndRegion(req2)
+	if si.credsProvider == nil {
+		return nil, fmt.Errorf("a credentials provider is not set")
 	}
+	creds, err := (*si.credsProvider).Retrieve(req2.Context())
+	if err != nil {
+		return nil, fmt.Errorf("error retrieving credentials: %w", err)
+	}
+
 	err = si.signer.SignHTTP(req.Context(), creds, req2, payloadHash, service, region, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("error signing the request: %w", err)
 	}
 
-	// Send the request
-	return si.transport.RoundTrip(req2)
+	return req2, nil
+}
+
+// hashPayload creates a SHA256 hash of the request body
+func hashPayload(req *http.Request) (string, error) {
+	if req.GetBody == nil {
+		// hash of an empty payload to use if there is no request body
+		return "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", nil
+	}
+
+	reqBody, err := req.GetBody()
+	if err != nil {
+		return "", err
+	}
+
+	// Hash the request body
+	h := sha256.New()
+	_, err = io.Copy(h, reqBody)
+	if err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(h.Sum(nil)), reqBody.Close()
 }
 
 // inferServiceAndRegion attempts to infer a service

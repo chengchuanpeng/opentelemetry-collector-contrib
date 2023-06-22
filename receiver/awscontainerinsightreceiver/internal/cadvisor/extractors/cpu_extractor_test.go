@@ -1,16 +1,5 @@
-// Copyright  OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package extractors
 
@@ -27,7 +16,7 @@ func TestCPUStats(t *testing.T) {
 	result := testutils.LoadContainerInfo(t, "./testdata/PreInfoContainer.json")
 	result2 := testutils.LoadContainerInfo(t, "./testdata/CurInfoContainer.json")
 
-	//test container type
+	// test container type
 	containerType := TypeContainer
 	extractor := NewCPUMetricExtractor(nil)
 
@@ -45,7 +34,7 @@ func TestCPUStats(t *testing.T) {
 	AssertContainsTaggedFloat(t, cMetrics[0], "container_cpu_usage_system", 10, 0)
 	AssertContainsTaggedFloat(t, cMetrics[0], "container_cpu_utilization", 0.5, 0)
 
-	//test node type
+	// test node type
 	containerType = TypeNode
 	extractor = NewCPUMetricExtractor(nil)
 
@@ -63,7 +52,7 @@ func TestCPUStats(t *testing.T) {
 	AssertContainsTaggedFloat(t, cMetrics[0], "node_cpu_utilization", 0.5, 0)
 	AssertContainsTaggedInt(t, cMetrics[0], "node_cpu_limit", 2000)
 
-	//test instance type
+	// test instance type
 	containerType = TypeInstance
 	extractor = NewCPUMetricExtractor(nil)
 

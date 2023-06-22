@@ -1,18 +1,6 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
-// nolint:errcheck
 package groupbytraceprocessor
 
 import (
@@ -29,8 +17,8 @@ func TestMemoryCreateAndGetTrace(t *testing.T) {
 	st := newMemoryStorage()
 
 	traceIDs := []pcommon.TraceID{
-		pcommon.NewTraceID([16]byte{1, 2, 3, 4}),
-		pcommon.NewTraceID([16]byte{2, 3, 4, 5}),
+		pcommon.TraceID([16]byte{1, 2, 3, 4}),
+		pcommon.TraceID([16]byte{2, 3, 4, 5}),
 	}
 
 	baseTrace := ptrace.NewTraces()
@@ -42,7 +30,7 @@ func TestMemoryCreateAndGetTrace(t *testing.T) {
 	// test
 	for _, traceID := range traceIDs {
 		span.SetTraceID(traceID)
-		st.createOrAppend(traceID, baseTrace)
+		assert.NoError(t, st.createOrAppend(traceID, baseTrace))
 	}
 
 	// verify
@@ -52,7 +40,7 @@ func TestMemoryCreateAndGetTrace(t *testing.T) {
 		expected[0].ScopeSpans().At(0).Spans().At(0).SetTraceID(traceID)
 
 		retrieved, err := st.get(traceID)
-		st.createOrAppend(traceID, baseTrace)
+		assert.NoError(t, st.createOrAppend(traceID, baseTrace))
 
 		require.NoError(t, err)
 		assert.Equal(t, expected, retrieved)
@@ -63,7 +51,7 @@ func TestMemoryDeleteTrace(t *testing.T) {
 	// prepare
 	st := newMemoryStorage()
 
-	traceID := pcommon.NewTraceID([16]byte{1, 2, 3, 4})
+	traceID := pcommon.TraceID([16]byte{1, 2, 3, 4})
 
 	trace := ptrace.NewTraces()
 	rss := trace.ResourceSpans()
@@ -72,7 +60,7 @@ func TestMemoryDeleteTrace(t *testing.T) {
 	span := ils.Spans().AppendEmpty()
 	span.SetTraceID(traceID)
 
-	st.createOrAppend(traceID, trace)
+	assert.NoError(t, st.createOrAppend(traceID, trace))
 
 	// test
 	deleted, err := st.delete(traceID)
@@ -90,7 +78,7 @@ func TestMemoryAppendSpans(t *testing.T) {
 	// prepare
 	st := newMemoryStorage()
 
-	traceID := pcommon.NewTraceID([16]byte{1, 2, 3, 4})
+	traceID := pcommon.TraceID([16]byte{1, 2, 3, 4})
 
 	trace := ptrace.NewTraces()
 	rss := trace.ResourceSpans()
@@ -98,9 +86,9 @@ func TestMemoryAppendSpans(t *testing.T) {
 	ils := rs.ScopeSpans().AppendEmpty()
 	span := ils.Spans().AppendEmpty()
 	span.SetTraceID(traceID)
-	span.SetSpanID(pcommon.NewSpanID([8]byte{1, 2, 3, 4}))
+	span.SetSpanID([8]byte{1, 2, 3, 4})
 
-	st.createOrAppend(traceID, trace)
+	assert.NoError(t, st.createOrAppend(traceID, trace))
 
 	secondTrace := ptrace.NewTraces()
 	secondRss := secondTrace.ResourceSpans()
@@ -109,7 +97,7 @@ func TestMemoryAppendSpans(t *testing.T) {
 	secondSpan := secondIls.Spans().AppendEmpty()
 	secondSpan.SetName("second-name")
 	secondSpan.SetTraceID(traceID)
-	secondSpan.SetSpanID(pcommon.NewSpanID([8]byte{5, 6, 7, 8}))
+	secondSpan.SetSpanID([8]byte{5, 6, 7, 8})
 
 	expected := []ptrace.ResourceSpans{
 		ptrace.NewResourceSpans(),
@@ -140,7 +128,7 @@ func TestMemoryAppendSpans(t *testing.T) {
 func TestMemoryTraceIsBeingCloned(t *testing.T) {
 	// prepare
 	st := newMemoryStorage()
-	traceID := pcommon.NewTraceID([16]byte{1, 2, 3, 4})
+	traceID := pcommon.TraceID([16]byte{1, 2, 3, 4})
 
 	trace := ptrace.NewTraces()
 	rss := trace.ResourceSpans()
@@ -148,7 +136,7 @@ func TestMemoryTraceIsBeingCloned(t *testing.T) {
 	ils := rs.ScopeSpans().AppendEmpty()
 	span := ils.Spans().AppendEmpty()
 	span.SetTraceID(traceID)
-	span.SetSpanID(pcommon.NewSpanID([8]byte{1, 2, 3, 4}))
+	span.SetSpanID([8]byte{1, 2, 3, 4})
 	span.SetName("should-not-be-changed")
 
 	// test

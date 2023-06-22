@@ -1,16 +1,5 @@
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 //go:build windows
 // +build windows
@@ -24,6 +13,7 @@ import (
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.opentelemetry.io/collector/receiver"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 
@@ -49,9 +39,9 @@ type watcherRecorder struct {
 type curriedRecorder func(*metadata.MetricsBuilder, pcommon.Timestamp)
 
 // newSqlServerScraper returns a new sqlServerScraper.
-func newSqlServerScraper(logger *zap.Logger, cfg *Config) *sqlServerScraper {
-	metricsBuilder := metadata.NewMetricsBuilder(cfg.Metrics)
-	return &sqlServerScraper{logger: logger, config: cfg, metricsBuilder: metricsBuilder}
+func newSqlServerScraper(params receiver.CreateSettings, cfg *Config) *sqlServerScraper {
+	metricsBuilder := metadata.NewMetricsBuilder(cfg.MetricsBuilderConfig, params)
+	return &sqlServerScraper{logger: params.Logger, config: cfg, metricsBuilder: metricsBuilder}
 }
 
 // start creates and sets the watchers for the scraper.
@@ -60,7 +50,13 @@ func (s *sqlServerScraper) start(ctx context.Context, host component.Host) error
 
 	for _, pcr := range perfCounterRecorders {
 		for perfCounterName, recorder := range pcr.recorders {
-			w, err := winperfcounters.NewWatcher(pcr.object, pcr.instance, perfCounterName)
+			perfCounterObj := defaultObjectName + ":" + pcr.object
+			if s.config.InstanceName != "" {
+				// The instance name must be preceded by "MSSQL$" to indicate that it is a named instance
+				perfCounterObj = "\\" + s.config.ComputerName + "\\MSSQL$" + s.config.InstanceName + ":" + pcr.object
+			}
+
+			w, err := winperfcounters.NewWatcher(perfCounterObj, pcr.instance, perfCounterName)
 			if err != nil {
 				s.logger.Warn(err.Error())
 				continue
@@ -97,7 +93,7 @@ func recordersPerDatabase(watcherRecorders []watcherRecorder) (map[string][]curr
 		}
 
 		for _, counterValue := range counterValues {
-			dbName := counterValue.Attributes["instance"]
+			dbName := counterValue.InstanceName
 
 			// it's important to initialize new values for the closure.
 			val := counterValue.Value
@@ -122,13 +118,15 @@ func (s *sqlServerScraper) emitMetricGroup(recorders []curriedRecorder, database
 		recorder(s.metricsBuilder, now)
 	}
 
+	attributes := []metadata.ResourceMetricsOption{}
 	if databaseName != "" {
-		s.metricsBuilder.EmitForResource(
-			metadata.WithSqlserverDatabaseName(databaseName),
-		)
-	} else {
-		s.metricsBuilder.EmitForResource()
+		attributes = append(attributes, metadata.WithSqlserverDatabaseName(databaseName))
 	}
+	if s.config.InstanceName != "" {
+		attributes = append(attributes, metadata.WithSqlserverComputerName(s.config.ComputerName))
+		attributes = append(attributes, metadata.WithSqlserverInstanceName(s.config.InstanceName))
+	}
+	s.metricsBuilder.EmitForResource(attributes...)
 }
 
 // shutdown stops all of the watchers for the scraper.

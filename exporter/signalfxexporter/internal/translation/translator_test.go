@@ -1,16 +1,5 @@
-// Copyright 2019, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package translation
 
@@ -2539,13 +2528,11 @@ func TestDeltaTranslatorNoMatchingMapping(t *testing.T) {
 func TestDeltaTranslatorMismatchedValueTypes(t *testing.T) {
 	c := testConverter(t, map[string]string{"system.cpu.time": "system.cpu.delta"})
 	md1 := baseMD()
-	md1.SetDataType(pmetric.MetricDataTypeSum)
-	intTS("cpu0", "user", 1, 1, 1, md1.Sum().DataPoints().AppendEmpty())
+	intTS("cpu0", "user", 1, 1, 1, md1.SetEmptySum().DataPoints().AppendEmpty())
 
 	_ = c.MetricsToSignalFxV2(wrapMetric(md1))
 	md2 := baseMD()
-	md2.SetDataType(pmetric.MetricDataTypeSum)
-	dblTS("cpu0", "user", 1, 1, 1, md2.Sum().DataPoints().AppendEmpty())
+	dblTS("cpu0", "user", 1, 1, 1, md2.SetEmptySum().DataPoints().AppendEmpty())
 	pts := c.MetricsToSignalFxV2(wrapMetric(md2))
 	idx := indexPts(pts)
 	require.Equal(t, 1, len(idx))
@@ -2983,8 +2970,7 @@ func indexPts(pts []*sfxpb.DataPoint) map[string][]*sfxpb.DataPoint {
 
 func doubleMD(secondsDelta int64, valueDelta float64) pmetric.Metrics {
 	md := baseMD()
-	md.SetDataType(pmetric.MetricDataTypeSum)
-	ms := md.Sum()
+	ms := md.SetEmptySum()
 	dblTS("cpu0", "user", secondsDelta, 100, valueDelta, ms.DataPoints().AppendEmpty())
 	dblTS("cpu0", "system", secondsDelta, 200, valueDelta, ms.DataPoints().AppendEmpty())
 	dblTS("cpu0", "idle", secondsDelta, 300, valueDelta, ms.DataPoints().AppendEmpty())
@@ -2997,8 +2983,7 @@ func doubleMD(secondsDelta int64, valueDelta float64) pmetric.Metrics {
 
 func intMD(secondsDelta int64, valueDelta int64) pmetric.Metrics {
 	md := baseMD()
-	md.SetDataType(pmetric.MetricDataTypeSum)
-	ms := md.Sum()
+	ms := md.SetEmptySum()
 	intTS("cpu0", "user", secondsDelta, 100, valueDelta, ms.DataPoints().AppendEmpty())
 	intTS("cpu0", "system", secondsDelta, 200, valueDelta, ms.DataPoints().AppendEmpty())
 	intTS("cpu0", "idle", secondsDelta, 300, valueDelta, ms.DataPoints().AppendEmpty())
@@ -3011,8 +2996,7 @@ func intMD(secondsDelta int64, valueDelta int64) pmetric.Metrics {
 
 func intMDAfterReset(secondsDelta int64, valueDelta int64) pmetric.Metrics {
 	md := baseMD()
-	md.SetDataType(pmetric.MetricDataTypeSum)
-	ms := md.Sum()
+	ms := md.SetEmptySum()
 	intTS("cpu0", "user", secondsDelta, 0, valueDelta, ms.DataPoints().AppendEmpty())
 	intTS("cpu0", "system", secondsDelta, 0, valueDelta, ms.DataPoints().AppendEmpty())
 	intTS("cpu0", "idle", secondsDelta, 0, valueDelta, ms.DataPoints().AppendEmpty())
@@ -3031,19 +3015,19 @@ func baseMD() pmetric.Metric {
 }
 
 func dblTS(lbl0 string, lbl1 string, secondsDelta int64, v float64, valueDelta float64, out pmetric.NumberDataPoint) {
-	out.Attributes().InsertString("cpu", lbl0)
-	out.Attributes().InsertString("state", lbl1)
+	out.Attributes().PutStr("cpu", lbl0)
+	out.Attributes().PutStr("state", lbl1)
 	const startTime = 1600000000
 	out.SetTimestamp(pcommon.Timestamp(time.Duration(startTime+secondsDelta) * time.Second))
-	out.SetDoubleVal(v + valueDelta)
+	out.SetDoubleValue(v + valueDelta)
 }
 
 func intTS(lbl0 string, lbl1 string, secondsDelta int64, v int64, valueDelta int64, out pmetric.NumberDataPoint) {
-	out.Attributes().InsertString("cpu", lbl0)
-	out.Attributes().InsertString("state", lbl1)
+	out.Attributes().PutStr("cpu", lbl0)
+	out.Attributes().PutStr("state", lbl1)
 	const startTime = 1600000000
 	out.SetTimestamp(pcommon.Timestamp(time.Duration(startTime+secondsDelta) * time.Second))
-	out.SetIntVal(v + valueDelta)
+	out.SetIntValue(v + valueDelta)
 }
 
 func wrapMetric(m pmetric.Metric) pmetric.Metrics {

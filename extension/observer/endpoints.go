@@ -1,22 +1,12 @@
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package observer // import "github.com/open-telemetry/opentelemetry-collector-contrib/extension/observer"
 
 import (
 	"errors"
 	"fmt"
+	"reflect"
 )
 
 type (
@@ -74,12 +64,32 @@ func (e *Endpoint) Env() (EndpointEnv, error) {
 	env := e.Details.Env()
 	env["endpoint"] = e.Target
 	env["type"] = string(e.Details.Type())
+	env["id"] = string(e.ID)
 
 	return env, nil
 }
 
 func (e *Endpoint) String() string {
 	return fmt.Sprintf("Endpoint{ID: %v, Target: %v, Details: %T%+v}", e.ID, e.Target, e.Details, e.Details)
+}
+
+func (e Endpoint) equals(other Endpoint) bool {
+	switch {
+	case e.ID != other.ID:
+		return false
+	case e.Target != other.Target:
+		return false
+	case e.Details == nil && other.Details != nil:
+		return false
+	case other.Details == nil && e.Details != nil:
+		return false
+	case e.Details == nil && other.Details == nil:
+		return true
+	case e.Details.Type() != other.Details.Type():
+		return false
+	default:
+		return reflect.DeepEqual(e.Details.Env(), other.Details.Env())
+	}
 }
 
 // Pod is a discovered k8s pod.

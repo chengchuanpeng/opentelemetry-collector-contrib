@@ -1,16 +1,5 @@
-// Copyright 2019, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package cloudfoundryreceiver
 
@@ -56,13 +45,13 @@ func TestConvertCountEnvelope(t *testing.T) {
 
 	metric := metricSlice.At(0)
 	assert.Equal(t, "gorouter.bad_gateways", metric.Name())
-	assert.Equal(t, pmetric.MetricDataTypeSum, metric.DataType())
+	assert.Equal(t, pmetric.MetricTypeSum, metric.Type())
 	dataPoints := metric.Sum().DataPoints()
 	assert.Equal(t, 1, dataPoints.Len())
 	dataPoint := dataPoints.At(0)
 	assert.Equal(t, pcommon.NewTimestampFromTime(now), dataPoint.Timestamp())
 	assert.Equal(t, pcommon.NewTimestampFromTime(before), dataPoint.StartTimestamp())
-	assert.Equal(t, 10.0, dataPoint.DoubleVal())
+	assert.Equal(t, 10.0, dataPoint.DoubleValue())
 
 	assertAttributes(t, dataPoint.Attributes(), map[string]string{
 		"org.cloudfoundry.source_id":  "uaa",
@@ -134,22 +123,22 @@ func TestConvertGaugeEnvelope(t *testing.T) {
 
 	metric := metricSlice.At(memoryMetricPosition)
 	assert.Equal(t, "rep.memory", metric.Name())
-	assert.Equal(t, pmetric.MetricDataTypeGauge, metric.DataType())
+	assert.Equal(t, pmetric.MetricTypeGauge, metric.Type())
 	assert.Equal(t, 1, metric.Gauge().DataPoints().Len())
 	dataPoint := metric.Gauge().DataPoints().At(0)
 	assert.Equal(t, pcommon.NewTimestampFromTime(now), dataPoint.Timestamp())
 	assert.Equal(t, pcommon.NewTimestampFromTime(before), dataPoint.StartTimestamp())
-	assert.Equal(t, 17046641.0, dataPoint.DoubleVal())
+	assert.Equal(t, 17046641.0, dataPoint.DoubleValue())
 	assertAttributes(t, dataPoint.Attributes(), expectedAttributes)
 
 	metric = metricSlice.At(1 - memoryMetricPosition)
 	assert.Equal(t, "rep.disk", metric.Name())
-	assert.Equal(t, pmetric.MetricDataTypeGauge, metric.DataType())
+	assert.Equal(t, pmetric.MetricTypeGauge, metric.Type())
 	assert.Equal(t, 1, metric.Gauge().DataPoints().Len())
 	dataPoint = metric.Gauge().DataPoints().At(0)
 	assert.Equal(t, pcommon.NewTimestampFromTime(now), dataPoint.Timestamp())
 	assert.Equal(t, pcommon.NewTimestampFromTime(before), dataPoint.StartTimestamp())
-	assert.Equal(t, 10231808.0, dataPoint.DoubleVal())
+	assert.Equal(t, 10231808.0, dataPoint.DoubleValue())
 	assertAttributes(t, dataPoint.Attributes(), expectedAttributes)
 }
 
@@ -159,6 +148,6 @@ func assertAttributes(t *testing.T, attributes pcommon.Map, expected map[string]
 	for key, expectedValue := range expected {
 		value, present := attributes.Get(key)
 		assert.True(t, present, "Attribute %s presence", key)
-		assert.Equal(t, expectedValue, value.StringVal(), "Attribute %s value", key)
+		assert.Equal(t, expectedValue, value.Str(), "Attribute %s value", key)
 	}
 }

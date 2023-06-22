@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package internal
 
@@ -31,19 +20,16 @@ import (
 	"go.opentelemetry.io/collector/config/confighttp"
 )
 
-func TestMissingClientConfigManager(t *testing.T) {
-	// test
+func TestMissingClientConfigManagerHTTP(t *testing.T) {
 	s, err := NewHTTP(componenttest.NewNopTelemetrySettings(), confighttp.HTTPServerSettings{}, nil)
-
-	// verify
 	assert.Equal(t, errMissingStrategyStore, err)
 	assert.Nil(t, s)
 }
 
-func TestStartAndStop(t *testing.T) {
+func TestStartAndStopHTTP(t *testing.T) {
 	// prepare
 	srvSettings := confighttp.HTTPServerSettings{
-		Endpoint: ":0",
+		Endpoint: "127.0.0.1:0",
 	}
 	s, err := NewHTTP(componenttest.NewNopTelemetrySettings(), srvSettings, &mockCfgMgr{})
 	require.NoError(t, err)
@@ -59,10 +45,6 @@ func TestEndpointsAreWired(t *testing.T) {
 		desc     string
 		endpoint string
 	}{
-		{
-			desc:     "legacy",
-			endpoint: "/",
-		},
 		{
 			desc:     "new",
 			endpoint: "/sampling",
@@ -138,15 +120,4 @@ func TestErrorFromClientConfigManager(t *testing.T) {
 	// verify
 	body, _ := io.ReadAll(rw.Body)
 	assert.Contains(t, string(body), "failed to get sampling strategy for service")
-}
-
-type mockCfgMgr struct {
-	getSamplingStrategyFunc func(ctx context.Context, serviceName string) (*sampling.SamplingStrategyResponse, error)
-}
-
-func (m *mockCfgMgr) GetSamplingStrategy(ctx context.Context, serviceName string) (*sampling.SamplingStrategyResponse, error) {
-	if m.getSamplingStrategyFunc != nil {
-		return m.getSamplingStrategyFunc(ctx, serviceName)
-	}
-	return sampling.NewSamplingStrategyResponse(), nil
 }

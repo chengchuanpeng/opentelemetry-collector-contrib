@@ -1,16 +1,5 @@
-// Copyright OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package signalfx
 
@@ -40,15 +29,15 @@ func Test_FromMetrics(t *testing.T) {
 		"k1": "v1",
 	}
 	attrMap := pcommon.NewMap()
-	attrMap.UpsertString("k0", "v0")
-	attrMap.UpsertString("k1", "v1")
+	attrMap.PutStr("k0", "v0")
+	attrMap.PutStr("k1", "v1")
 
 	ts := pcommon.NewTimestampFromTime(time.Unix(unixSecs, unixNSecs))
 
 	const doubleVal = 1234.5678
 	initDoublePt := func(dp pmetric.NumberDataPoint) {
 		dp.SetTimestamp(ts)
-		dp.SetDoubleVal(doubleVal)
+		dp.SetDoubleValue(doubleVal)
 	}
 
 	initDoublePtWithLabels := func(dp pmetric.NumberDataPoint) {
@@ -59,7 +48,7 @@ func Test_FromMetrics(t *testing.T) {
 	const int64Val = int64(123)
 	initInt64Pt := func(dp pmetric.NumberDataPoint) {
 		dp.SetTimestamp(ts)
-		dp.SetIntVal(int64Val)
+		dp.SetIntValue(int64Val)
 	}
 
 	initInt64PtWithLabels := func(dp pmetric.NumberDataPoint) {
@@ -67,13 +56,19 @@ func Test_FromMetrics(t *testing.T) {
 		attrMap.CopyTo(dp.Attributes())
 	}
 
-	initHistDP := func(dp pmetric.HistogramDataPoint) {
+	initHistDPNoOptional := func(dp pmetric.HistogramDataPoint) {
 		dp.SetTimestamp(ts)
 		dp.SetCount(16)
-		dp.SetSum(100.0)
-		dp.SetMExplicitBounds([]float64{1, 2, 4})
-		dp.SetMBucketCounts([]uint64{4, 2, 3, 7})
+		dp.ExplicitBounds().FromRaw([]float64{1, 2, 4})
+		dp.BucketCounts().FromRaw([]uint64{4, 2, 3, 7})
 		attrMap.CopyTo(dp.Attributes())
+	}
+
+	initHistDP := func(dp pmetric.HistogramDataPoint) {
+		initHistDPNoOptional(dp)
+		dp.SetSum(100.0)
+		dp.SetMin(0.1)
+		dp.SetMax(11.11)
 	}
 
 	tests := []struct {
@@ -90,59 +85,51 @@ func Test_FromMetrics(t *testing.T) {
 				{
 					m := ilm.Metrics().AppendEmpty()
 					m.SetName("gauge_double_with_dims")
-					m.SetDataType(pmetric.MetricDataTypeGauge)
-					initDoublePt(m.Gauge().DataPoints().AppendEmpty())
+					initDoublePt(m.SetEmptyGauge().DataPoints().AppendEmpty())
 				}
 				{
 					m := ilm.Metrics().AppendEmpty()
 					m.SetName("gauge_int_with_dims")
-					m.SetDataType(pmetric.MetricDataTypeGauge)
-					initInt64Pt(m.Gauge().DataPoints().AppendEmpty())
+					initInt64Pt(m.SetEmptyGauge().DataPoints().AppendEmpty())
 				}
 				{
 					m := ilm.Metrics().AppendEmpty()
 					m.SetName("cumulative_double_with_dims")
-					m.SetDataType(pmetric.MetricDataTypeSum)
-					m.Sum().SetIsMonotonic(true)
-					m.Sum().SetAggregationTemporality(pmetric.MetricAggregationTemporalityCumulative)
+					m.SetEmptySum().SetIsMonotonic(true)
+					m.Sum().SetAggregationTemporality(pmetric.AggregationTemporalityCumulative)
 					initDoublePt(m.Sum().DataPoints().AppendEmpty())
 				}
 				{
 					m := ilm.Metrics().AppendEmpty()
 					m.SetName("cumulative_int_with_dims")
-					m.SetDataType(pmetric.MetricDataTypeSum)
-					m.Sum().SetIsMonotonic(true)
-					m.Sum().SetAggregationTemporality(pmetric.MetricAggregationTemporalityCumulative)
+					m.SetEmptySum().SetIsMonotonic(true)
+					m.Sum().SetAggregationTemporality(pmetric.AggregationTemporalityCumulative)
 					initInt64Pt(m.Sum().DataPoints().AppendEmpty())
 				}
 				{
 					m := ilm.Metrics().AppendEmpty()
 					m.SetName("delta_double_with_dims")
-					m.SetDataType(pmetric.MetricDataTypeSum)
-					m.Sum().SetIsMonotonic(true)
-					m.Sum().SetAggregationTemporality(pmetric.MetricAggregationTemporalityDelta)
+					m.SetEmptySum().SetIsMonotonic(true)
+					m.Sum().SetAggregationTemporality(pmetric.AggregationTemporalityDelta)
 					initDoublePt(m.Sum().DataPoints().AppendEmpty())
 				}
 				{
 					m := ilm.Metrics().AppendEmpty()
 					m.SetName("delta_int_with_dims")
-					m.SetDataType(pmetric.MetricDataTypeSum)
-					m.Sum().SetIsMonotonic(true)
-					m.Sum().SetAggregationTemporality(pmetric.MetricAggregationTemporalityDelta)
+					m.SetEmptySum().SetIsMonotonic(true)
+					m.Sum().SetAggregationTemporality(pmetric.AggregationTemporalityDelta)
 					initInt64Pt(m.Sum().DataPoints().AppendEmpty())
 				}
 				{
 					m := ilm.Metrics().AppendEmpty()
 					m.SetName("gauge_sum_double_with_dims")
-					m.SetDataType(pmetric.MetricDataTypeSum)
-					m.Sum().SetIsMonotonic(false)
+					m.SetEmptySum().SetIsMonotonic(false)
 					initDoublePt(m.Sum().DataPoints().AppendEmpty())
 				}
 				{
 					m := ilm.Metrics().AppendEmpty()
 					m.SetName("gauge_sum_int_with_dims")
-					m.SetDataType(pmetric.MetricDataTypeSum)
-					m.Sum().SetIsMonotonic(false)
+					m.SetEmptySum().SetIsMonotonic(false)
 					initInt64Pt(m.Sum().DataPoints().AppendEmpty())
 				}
 
@@ -168,27 +155,23 @@ func Test_FromMetrics(t *testing.T) {
 				{
 					m := ilm.Metrics().AppendEmpty()
 					m.SetName("gauge_double_with_dims")
-					m.SetDataType(pmetric.MetricDataTypeGauge)
-					initDoublePtWithLabels(m.Gauge().DataPoints().AppendEmpty())
+					initDoublePtWithLabels(m.SetEmptyGauge().DataPoints().AppendEmpty())
 				}
 				{
 					m := ilm.Metrics().AppendEmpty()
 					m.SetName("gauge_int_with_dims")
-					m.SetDataType(pmetric.MetricDataTypeGauge)
-					initInt64PtWithLabels(m.Gauge().DataPoints().AppendEmpty())
+					initInt64PtWithLabels(m.SetEmptyGauge().DataPoints().AppendEmpty())
 				}
 				{
 					m := ilm.Metrics().AppendEmpty()
 					m.SetName("cumulative_double_with_dims")
-					m.SetDataType(pmetric.MetricDataTypeSum)
-					m.Sum().SetIsMonotonic(true)
+					m.SetEmptySum().SetIsMonotonic(true)
 					initDoublePtWithLabels(m.Sum().DataPoints().AppendEmpty())
 				}
 				{
 					m := ilm.Metrics().AppendEmpty()
 					m.SetName("cumulative_int_with_dims")
-					m.SetDataType(pmetric.MetricDataTypeSum)
-					m.Sum().SetIsMonotonic(true)
+					m.SetEmptySum().SetIsMonotonic(true)
 					initInt64PtWithLabels(m.Sum().DataPoints().AppendEmpty())
 				}
 
@@ -207,10 +190,10 @@ func Test_FromMetrics(t *testing.T) {
 				out := pmetric.NewMetrics()
 				rm := out.ResourceMetrics().AppendEmpty()
 				res := rm.Resource()
-				res.Attributes().InsertString("k_r0", "v_r0")
-				res.Attributes().InsertString("k_r1", "v_r1")
-				res.Attributes().InsertString("k_n0", "v_n0")
-				res.Attributes().InsertString("k_n1", "v_n1")
+				res.Attributes().PutStr("k_r0", "v_r0")
+				res.Attributes().PutStr("k_r1", "v_r1")
+				res.Attributes().PutStr("k_n0", "v_n0")
+				res.Attributes().PutStr("k_n1", "v_n1")
 
 				ilm := rm.ScopeMetrics().AppendEmpty()
 				ilm.Metrics().EnsureCapacity(2)
@@ -218,14 +201,12 @@ func Test_FromMetrics(t *testing.T) {
 				{
 					m := ilm.Metrics().AppendEmpty()
 					m.SetName("gauge_double_with_dims")
-					m.SetDataType(pmetric.MetricDataTypeGauge)
-					initDoublePtWithLabels(m.Gauge().DataPoints().AppendEmpty())
+					initDoublePtWithLabels(m.SetEmptyGauge().DataPoints().AppendEmpty())
 				}
 				{
 					m := ilm.Metrics().AppendEmpty()
 					m.SetName("gauge_int_with_dims")
-					m.SetDataType(pmetric.MetricDataTypeGauge)
-					initInt64PtWithLabels(m.Gauge().DataPoints().AppendEmpty())
+					initInt64PtWithLabels(m.SetEmptyGauge().DataPoints().AppendEmpty())
 				}
 
 				return out
@@ -260,22 +241,46 @@ func Test_FromMetrics(t *testing.T) {
 				ilm := out.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty()
 				m := ilm.Metrics().AppendEmpty()
 				m.SetName("histogram")
-				m.SetDataType(pmetric.MetricDataTypeHistogram)
-				m.Histogram().SetAggregationTemporality(pmetric.MetricAggregationTemporalityCumulative)
+				m.SetEmptyHistogram().SetAggregationTemporality(pmetric.AggregationTemporalityCumulative)
 				initHistDP(m.Histogram().DataPoints().AppendEmpty())
 				return out
 			},
 			wantSfxDataPoints: []*sfxpb.DataPoint{
 				int64SFxDataPoint("histogram_count", &sfxMetricTypeCumulativeCounter, labelMap, 16),
-				doubleSFxDataPoint("histogram", &sfxMetricTypeCumulativeCounter, labelMap, 100.0),
+				doubleSFxDataPoint("histogram_sum", &sfxMetricTypeCumulativeCounter, labelMap, 100.0),
+				doubleSFxDataPoint("histogram_min", &sfxMetricTypeGauge, labelMap, 0.1),
+				doubleSFxDataPoint("histogram_max", &sfxMetricTypeGauge, labelMap, 11.11),
 				int64SFxDataPoint("histogram_bucket", &sfxMetricTypeCumulativeCounter,
 					maps.MergeStringMaps(map[string]string{bucketDimensionKey: "1"}, labelMap), 4),
 				int64SFxDataPoint("histogram_bucket", &sfxMetricTypeCumulativeCounter,
-					maps.MergeStringMaps(map[string]string{bucketDimensionKey: "2"}, labelMap), 2),
+					maps.MergeStringMaps(map[string]string{bucketDimensionKey: "2"}, labelMap), 6),
 				int64SFxDataPoint("histogram_bucket", &sfxMetricTypeCumulativeCounter,
-					maps.MergeStringMaps(map[string]string{bucketDimensionKey: "4"}, labelMap), 3),
+					maps.MergeStringMaps(map[string]string{bucketDimensionKey: "4"}, labelMap), 9),
 				int64SFxDataPoint("histogram_bucket", &sfxMetricTypeCumulativeCounter,
-					maps.MergeStringMaps(map[string]string{bucketDimensionKey: "+Inf"}, labelMap), 7),
+					maps.MergeStringMaps(map[string]string{bucketDimensionKey: "+Inf"}, labelMap), 16),
+			},
+		},
+		{
+			name: "histogram_no_optional",
+			metricsFn: func() pmetric.Metrics {
+				out := pmetric.NewMetrics()
+				ilm := out.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty()
+				m := ilm.Metrics().AppendEmpty()
+				m.SetName("histogram")
+				m.SetEmptyHistogram().SetAggregationTemporality(pmetric.AggregationTemporalityCumulative)
+				initHistDPNoOptional(m.Histogram().DataPoints().AppendEmpty())
+				return out
+			},
+			wantSfxDataPoints: []*sfxpb.DataPoint{
+				int64SFxDataPoint("histogram_count", &sfxMetricTypeCumulativeCounter, labelMap, 16),
+				int64SFxDataPoint("histogram_bucket", &sfxMetricTypeCumulativeCounter,
+					maps.MergeStringMaps(map[string]string{bucketDimensionKey: "1"}, labelMap), 4),
+				int64SFxDataPoint("histogram_bucket", &sfxMetricTypeCumulativeCounter,
+					maps.MergeStringMaps(map[string]string{bucketDimensionKey: "2"}, labelMap), 6),
+				int64SFxDataPoint("histogram_bucket", &sfxMetricTypeCumulativeCounter,
+					maps.MergeStringMaps(map[string]string{bucketDimensionKey: "4"}, labelMap), 9),
+				int64SFxDataPoint("histogram_bucket", &sfxMetricTypeCumulativeCounter,
+					maps.MergeStringMaps(map[string]string{bucketDimensionKey: "+Inf"}, labelMap), 16),
 			},
 		},
 		{
@@ -285,22 +290,23 @@ func Test_FromMetrics(t *testing.T) {
 				ilm := out.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty()
 				m := ilm.Metrics().AppendEmpty()
 				m.SetName("delta_histogram")
-				m.SetDataType(pmetric.MetricDataTypeHistogram)
-				m.Histogram().SetAggregationTemporality(pmetric.MetricAggregationTemporalityDelta)
+				m.SetEmptyHistogram().SetAggregationTemporality(pmetric.AggregationTemporalityDelta)
 				initHistDP(m.Histogram().DataPoints().AppendEmpty())
 				return out
 			},
 			wantSfxDataPoints: []*sfxpb.DataPoint{
 				int64SFxDataPoint("delta_histogram_count", &sfxMetricTypeCounter, labelMap, 16),
-				doubleSFxDataPoint("delta_histogram", &sfxMetricTypeCounter, labelMap, 100.0),
+				doubleSFxDataPoint("delta_histogram_sum", &sfxMetricTypeCounter, labelMap, 100.0),
+				doubleSFxDataPoint("delta_histogram_min", &sfxMetricTypeGauge, labelMap, 0.1),
+				doubleSFxDataPoint("delta_histogram_max", &sfxMetricTypeGauge, labelMap, 11.11),
 				int64SFxDataPoint("delta_histogram_bucket", &sfxMetricTypeCounter,
 					maps.MergeStringMaps(map[string]string{bucketDimensionKey: "1"}, labelMap), 4),
 				int64SFxDataPoint("delta_histogram_bucket", &sfxMetricTypeCounter,
-					maps.MergeStringMaps(map[string]string{bucketDimensionKey: "2"}, labelMap), 2),
+					maps.MergeStringMaps(map[string]string{bucketDimensionKey: "2"}, labelMap), 6),
 				int64SFxDataPoint("delta_histogram_bucket", &sfxMetricTypeCounter,
-					maps.MergeStringMaps(map[string]string{bucketDimensionKey: "4"}, labelMap), 3),
+					maps.MergeStringMaps(map[string]string{bucketDimensionKey: "4"}, labelMap), 9),
 				int64SFxDataPoint("delta_histogram_bucket", &sfxMetricTypeCounter,
-					maps.MergeStringMaps(map[string]string{bucketDimensionKey: "+Inf"}, labelMap), 7),
+					maps.MergeStringMaps(map[string]string{bucketDimensionKey: "+Inf"}, labelMap), 16),
 			},
 		},
 		{
@@ -310,8 +316,7 @@ func Test_FromMetrics(t *testing.T) {
 				ilm := out.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty()
 				m := ilm.Metrics().AppendEmpty()
 				m.SetName("no_bucket_histo")
-				m.SetDataType(pmetric.MetricDataTypeHistogram)
-				dp := m.Histogram().DataPoints().AppendEmpty()
+				dp := m.SetEmptyHistogram().DataPoints().AppendEmpty()
 				dp.SetCount(2)
 				dp.SetSum(10)
 				dp.SetTimestamp(ts)
@@ -320,7 +325,7 @@ func Test_FromMetrics(t *testing.T) {
 			},
 			wantSfxDataPoints: []*sfxpb.DataPoint{
 				int64SFxDataPoint("no_bucket_histo_count", &sfxMetricTypeCumulativeCounter, labelMap, 2),
-				doubleSFxDataPoint("no_bucket_histo", &sfxMetricTypeCumulativeCounter, labelMap, 10),
+				doubleSFxDataPoint("no_bucket_histo_sum", &sfxMetricTypeCumulativeCounter, labelMap, 10),
 			},
 		},
 		{
@@ -330,8 +335,7 @@ func Test_FromMetrics(t *testing.T) {
 				ilm := out.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty()
 				m := ilm.Metrics().AppendEmpty()
 				m.SetName("summary")
-				m.SetDataType(pmetric.MetricDataTypeSummary)
-				dp := m.Summary().DataPoints().AppendEmpty()
+				dp := m.SetEmptySummary().DataPoints().AppendEmpty()
 				dp.SetTimestamp(ts)
 				dp.SetSum(123.4)
 				dp.SetCount(111)
@@ -346,7 +350,7 @@ func Test_FromMetrics(t *testing.T) {
 			},
 			wantSfxDataPoints: []*sfxpb.DataPoint{
 				int64SFxDataPoint("summary_count", &sfxMetricTypeCumulativeCounter, labelMap, 111),
-				doubleSFxDataPoint("summary", &sfxMetricTypeCumulativeCounter, labelMap, 123.4),
+				doubleSFxDataPoint("summary_sum", &sfxMetricTypeCumulativeCounter, labelMap, 123.4),
 				doubleSFxDataPoint("summary_quantile", &sfxMetricTypeGauge,
 					maps.MergeStringMaps(map[string]string{quantileDimensionKey: "0.25"}, labelMap), 0),
 				doubleSFxDataPoint("summary_quantile", &sfxMetricTypeGauge,
@@ -364,8 +368,7 @@ func Test_FromMetrics(t *testing.T) {
 				ilm := out.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty()
 				m := ilm.Metrics().AppendEmpty()
 				m.SetName("empty_summary")
-				m.SetDataType(pmetric.MetricDataTypeSummary)
-				dp := m.Summary().DataPoints().AppendEmpty()
+				dp := m.SetEmptySummary().DataPoints().AppendEmpty()
 				dp.SetTimestamp(ts)
 				dp.SetSum(12.3)
 				dp.SetCount(11)
@@ -374,7 +377,7 @@ func Test_FromMetrics(t *testing.T) {
 			},
 			wantSfxDataPoints: []*sfxpb.DataPoint{
 				int64SFxDataPoint("empty_summary_count", &sfxMetricTypeCumulativeCounter, labelMap, 11),
-				doubleSFxDataPoint("empty_summary", &sfxMetricTypeCumulativeCounter, labelMap, 12.3),
+				doubleSFxDataPoint("empty_summary_sum", &sfxMetricTypeCumulativeCounter, labelMap, 12.3),
 			},
 		},
 	}

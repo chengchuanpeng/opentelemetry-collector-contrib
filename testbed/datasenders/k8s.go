@@ -1,23 +1,11 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package datasenders // import "github.com/open-telemetry/opentelemetry-collector-contrib/testbed/datasenders"
 
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"os"
 	"strconv"
@@ -60,16 +48,16 @@ var _ testbed.LogDataSender = (*FileLogK8sWriter)(nil)
 // |      regex: ^(?P<log>.*)$
 // |  `
 func NewFileLogK8sWriter(config string) *FileLogK8sWriter {
-	dir, err := ioutil.TempDir("", "namespace-*_test-pod_000011112222333344445555666677778888")
+	dir, err := os.MkdirTemp("", "namespace-*_test-pod_000011112222333344445555666677778888")
 	if err != nil {
 		panic("failed to create temp dir")
 	}
-	dir, err = ioutil.TempDir(dir, "*")
+	dir, err = os.MkdirTemp(dir, "*")
 	if err != nil {
 		panic("failed to create temp dir")
 	}
 
-	file, err := ioutil.TempFile(dir, "*.log")
+	file, err := os.CreateTemp(dir, "*.log")
 	if err != nil {
 		panic("failed to create temp file")
 	}
@@ -116,8 +104,8 @@ func (f *FileLogK8sWriter) convertLogToTextLine(lr plog.LogRecord) []byte {
 	sb.WriteString(lr.SeverityText())
 	sb.WriteString(" ")
 
-	if lr.Body().Type() == pcommon.ValueTypeString {
-		sb.WriteString(lr.Body().StringVal())
+	if lr.Body().Type() == pcommon.ValueTypeStr {
+		sb.WriteString(lr.Body().Str())
 	}
 
 	lr.Attributes().Range(func(k string, v pcommon.Value) bool {
@@ -125,14 +113,14 @@ func (f *FileLogK8sWriter) convertLogToTextLine(lr plog.LogRecord) []byte {
 		sb.WriteString(k)
 		sb.WriteString("=")
 		switch v.Type() {
-		case pcommon.ValueTypeString:
-			sb.WriteString(v.StringVal())
+		case pcommon.ValueTypeStr:
+			sb.WriteString(v.Str())
 		case pcommon.ValueTypeInt:
-			sb.WriteString(strconv.FormatInt(v.IntVal(), 10))
+			sb.WriteString(strconv.FormatInt(v.Int(), 10))
 		case pcommon.ValueTypeDouble:
-			sb.WriteString(strconv.FormatFloat(v.DoubleVal(), 'f', -1, 64))
+			sb.WriteString(strconv.FormatFloat(v.Double(), 'f', -1, 64))
 		case pcommon.ValueTypeBool:
-			sb.WriteString(strconv.FormatBool(v.BoolVal()))
+			sb.WriteString(strconv.FormatBool(v.Bool()))
 		default:
 			panic("missing case")
 		}

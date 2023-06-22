@@ -1,22 +1,12 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package attraction
 
 import (
 	"context"
 	"crypto/sha1" // #nosec
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -40,10 +30,10 @@ type testCase struct {
 // runIndividualTestCase is the common logic of passing trace data through a configured attributes processor.
 func runIndividualTestCase(t *testing.T, tt testCase, ap *AttrProc) {
 	t.Run(tt.name, func(t *testing.T) {
-		attrMap := pcommon.NewMapFromRaw(tt.inputAttributes)
-		ap.Process(context.TODO(), nil, attrMap)
-		attrMap.Sort()
-		require.Equal(t, pcommon.NewMapFromRaw(tt.expectedAttributes).Sort(), attrMap)
+		inputMap := pcommon.NewMap()
+		assert.NoError(t, inputMap.FromRaw(tt.inputAttributes))
+		ap.Process(context.TODO(), nil, inputMap)
+		require.Equal(t, tt.expectedAttributes, inputMap.AsRaw())
 	})
 }
 
@@ -54,7 +44,7 @@ func TestAttributes_InsertValue(t *testing.T) {
 			name:            "InsertEmptyAttributes",
 			inputAttributes: map[string]interface{}{},
 			expectedAttributes: map[string]interface{}{
-				"attribute1": 123,
+				"attribute1": int64(123),
 			},
 		},
 		// Ensure `attribute1` is set.
@@ -65,7 +55,7 @@ func TestAttributes_InsertValue(t *testing.T) {
 			},
 			expectedAttributes: map[string]interface{}{
 				"anotherkey": "bob",
-				"attribute1": 123,
+				"attribute1": int64(123),
 			},
 		},
 		// Ensures no insert is performed because the keys `attribute1` already exists.
@@ -108,32 +98,32 @@ func TestAttributes_InsertFromAttribute(t *testing.T) {
 		{
 			name: "InsertMissingFromAttribute",
 			inputAttributes: map[string]interface{}{
-				"bob": 1,
+				"bob": int64(1),
 			},
 			expectedAttributes: map[string]interface{}{
-				"bob": 1,
+				"bob": int64(1),
 			},
 		},
 		// Ensure `string key` is set.
 		{
 			name: "InsertAttributeExists",
 			inputAttributes: map[string]interface{}{
-				"anotherkey": 8892342,
+				"anotherkey": int64(8892342),
 			},
 			expectedAttributes: map[string]interface{}{
-				"anotherkey": 8892342,
-				"string key": 8892342,
+				"anotherkey": int64(8892342),
+				"string key": int64(8892342),
 			},
 		},
 		// Ensures no insert is performed because the keys `string key` already exist.
 		{
 			name: "InsertKeysExists",
 			inputAttributes: map[string]interface{}{
-				"anotherkey": 8892342,
+				"anotherkey": int64(8892342),
 				"string key": "here",
 			},
 			expectedAttributes: map[string]interface{}{
-				"anotherkey": 8892342,
+				"anotherkey": int64(8892342),
 				"string key": "here",
 			},
 		},
@@ -330,11 +320,11 @@ func TestAttributes_Extract(t *testing.T) {
 			name: "No extract with non string target key",
 			inputAttributes: map[string]interface{}{
 				"boo":      "ghosts are scary",
-				"user_key": 1234,
+				"user_key": int64(1234),
 			},
 			expectedAttributes: map[string]interface{}{
 				"boo":      "ghosts are scary",
-				"user_key": 1234,
+				"user_key": int64(1234),
 			},
 		},
 		// Ensure `new_user_key` is not updated for spans with attribute
@@ -450,12 +440,12 @@ func TestAttributes_UpsertFromAttribute(t *testing.T) {
 		{
 			name: "UpsertFromAttributeExistsInsert",
 			inputAttributes: map[string]interface{}{
-				"user_key": 2245,
+				"user_key": int64(2245),
 				"foo":      "casper the friendly ghost",
 			},
 			expectedAttributes: map[string]interface{}{
-				"user_key":     2245,
-				"new_user_key": 2245,
+				"user_key":     int64(2245),
+				"new_user_key": int64(2245),
 				"foo":          "casper the friendly ghost",
 			},
 		},
@@ -463,13 +453,13 @@ func TestAttributes_UpsertFromAttribute(t *testing.T) {
 		{
 			name: "UpsertFromAttributeExistsUpdate",
 			inputAttributes: map[string]interface{}{
-				"user_key":     2245,
-				"new_user_key": 5422,
+				"user_key":     int64(2245),
+				"new_user_key": int64(5422),
 				"foo":          "casper the friendly ghost",
 			},
 			expectedAttributes: map[string]interface{}{
-				"user_key":     2245,
-				"new_user_key": 2245,
+				"user_key":     int64(2245),
+				"new_user_key": int64(2245),
 				"foo":          "casper the friendly ghost",
 			},
 		},
@@ -519,11 +509,72 @@ func TestAttributes_Delete(t *testing.T) {
 				"original_key": 3245.6,
 			},
 		},
+		// Ensure `duplicate_key` is deleted by regexp for spans with the attribute set.
+		{
+			name: "DeleteAttributeExists",
+			inputAttributes: map[string]interface{}{
+				"duplicate_key_a":   3245.6,
+				"duplicate_key_b":   3245.6,
+				"duplicate_key_c":   3245.6,
+				"original_key":      3245.6,
+				"not_duplicate_key": 3246.6,
+			},
+			expectedAttributes: map[string]interface{}{
+				"original_key":      3245.6,
+				"not_duplicate_key": 3246.6,
+			},
+		},
 	}
 
 	cfg := &Settings{
 		Actions: []ActionKeyValue{
-			{Key: "duplicate_key", Action: DELETE},
+			{Key: "duplicate_key", RegexPattern: "^duplicate_key_.", Action: DELETE},
+		},
+	}
+
+	ap, err := NewAttrProc(cfg)
+	require.Nil(t, err)
+	require.NotNil(t, ap)
+
+	for _, tt := range testCases {
+		runIndividualTestCase(t, tt, ap)
+	}
+}
+
+func TestAttributes_Delete_Regexp(t *testing.T) {
+	testCases := []testCase{
+		// Ensure the span contains no changes.
+		{
+			name:               "DeleteEmptyAttributes",
+			inputAttributes:    map[string]interface{}{},
+			expectedAttributes: map[string]interface{}{},
+		},
+		// Ensure the span contains no changes because the key doesn't exist.
+		{
+			name: "DeleteAttributeNoExist",
+			inputAttributes: map[string]interface{}{
+				"boo": "ghosts are scary",
+			},
+			expectedAttributes: map[string]interface{}{
+				"boo": "ghosts are scary",
+			},
+		},
+		// Ensure `duplicate_key` is deleted for spans with the attribute set.
+		{
+			name: "DeleteAttributeExists",
+			inputAttributes: map[string]interface{}{
+				"duplicate_key": 3245.6,
+				"original_key":  3245.6,
+			},
+			expectedAttributes: map[string]interface{}{
+				"original_key": 3245.6,
+			},
+		},
+	}
+
+	cfg := &Settings{
+		Actions: []ActionKeyValue{
+			{RegexPattern: "duplicate.*", Action: DELETE},
 		},
 	}
 
@@ -537,7 +588,6 @@ func TestAttributes_Delete(t *testing.T) {
 }
 
 func TestAttributes_HashValue(t *testing.T) {
-
 	intVal := int64(24)
 	intBytes := make([]byte, int64ByteSize)
 	binary.LittleEndian.PutUint64(intBytes, uint64(intVal))
@@ -570,7 +620,7 @@ func TestAttributes_HashValue(t *testing.T) {
 				"updateme": "foo",
 			},
 			expectedAttributes: map[string]interface{}{
-				"updateme": sha1Hash([]byte("foo")),
+				"updateme": hash([]byte("foo")),
 			},
 		},
 		// Ensure int data types are hashed correctly
@@ -580,7 +630,7 @@ func TestAttributes_HashValue(t *testing.T) {
 				"updateme": intVal,
 			},
 			expectedAttributes: map[string]interface{}{
-				"updateme": sha1Hash(intBytes),
+				"updateme": hash(intBytes),
 			},
 		},
 		// Ensure double data types are hashed correctly
@@ -590,7 +640,7 @@ func TestAttributes_HashValue(t *testing.T) {
 				"updateme": doubleVal,
 			},
 			expectedAttributes: map[string]interface{}{
-				"updateme": sha1Hash(doubleBytes),
+				"updateme": hash(doubleBytes),
 			},
 		},
 		// Ensure bool data types are hashed correctly
@@ -600,7 +650,7 @@ func TestAttributes_HashValue(t *testing.T) {
 				"updateme": true,
 			},
 			expectedAttributes: map[string]interface{}{
-				"updateme": sha1Hash([]byte{1}),
+				"updateme": hash([]byte{1}),
 			},
 		},
 		// Ensure bool data types are hashed correctly
@@ -610,14 +660,26 @@ func TestAttributes_HashValue(t *testing.T) {
 				"updateme": false,
 			},
 			expectedAttributes: map[string]interface{}{
-				"updateme": sha1Hash([]byte{0}),
+				"updateme": hash([]byte{0}),
+			},
+		},
+		// Ensure regex pattern is being used
+		{
+			name: "HashRegex",
+			inputAttributes: map[string]interface{}{
+				"updatemebyregexp":      false,
+				"donotupdatemebyregexp": false,
+			},
+			expectedAttributes: map[string]interface{}{
+				"updatemebyregexp":      hash([]byte{0}),
+				"donotupdatemebyregexp": false,
 			},
 		},
 	}
 
 	cfg := &Settings{
 		Actions: []ActionKeyValue{
-			{Key: "updateme", Action: HASH},
+			{Key: "updateme", RegexPattern: "^updatemeby.*", Action: HASH},
 		},
 	}
 
@@ -765,7 +827,7 @@ func TestInvalidConfig(t *testing.T) {
 			actionLists: []ActionKeyValue{
 				{Key: "UnsupportedValue", Value: []int{}, Action: UPSERT},
 			},
-			errorString: "error unsupported value type \"[]int\"",
+			errorString: "<Invalid value type []int>",
 		},
 		{
 			name: "missing value or from attribute",
@@ -814,13 +876,6 @@ func TestInvalidConfig(t *testing.T) {
 				{Key: "aa", RegexPattern: "(?P<invalid.regex>.*?)$", Action: EXTRACT},
 			},
 			errorString: "error creating AttrProc. Field \"pattern\" has invalid pattern: \"(?P<invalid.regex>.*?)$\" to be set at the 0-th actions",
-		},
-		{
-			name: "delete with regex",
-			actionLists: []ActionKeyValue{
-				{RegexPattern: "(?P<operation_website>.*?)$", Key: "ab", Action: DELETE},
-			},
-			errorString: "error creating AttrProc. Action \"delete\" does not use value sources or \"pattern\" field. These must not be specified for 0-th action",
 		},
 		{
 			name: "regex with unnamed capture group",
@@ -874,9 +929,22 @@ func TestValidConfiguration(t *testing.T) {
 
 }
 
+func hash(b []byte) string {
+	if enableSha256Gate.IsEnabled() {
+		return sha2Hash(b)
+	}
+	return sha1Hash(b)
+}
+
 func sha1Hash(b []byte) string {
 	// #nosec
 	h := sha1.New()
+	h.Write(b)
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+func sha2Hash(b []byte) string {
+	h := sha256.New()
 	h.Write(b)
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
@@ -966,8 +1034,7 @@ func TestFromContext(t *testing.T) {
 			require.NotNil(t, ap)
 			attrMap := pcommon.NewMap()
 			ap.Process(tc.ctx, nil, attrMap)
-			attrMap.Sort()
-			require.Equal(t, pcommon.NewMapFromRaw(tc.expectedAttributes).Sort(), attrMap)
+			require.Equal(t, tc.expectedAttributes, attrMap.AsRaw())
 		})
 	}
 }

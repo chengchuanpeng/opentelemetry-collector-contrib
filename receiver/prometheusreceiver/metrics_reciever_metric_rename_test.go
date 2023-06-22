@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package prometheusreceiver
 
@@ -21,6 +10,7 @@ import (
 	promcfg "github.com/prometheus/prometheus/config"
 	"github.com/prometheus/prometheus/model/relabel"
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/collector/featuregate"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 )
 
@@ -58,7 +48,7 @@ func TestMetricRenaming(t *testing.T) {
 		},
 	}
 
-	testComponent(t, targets, false, "", func(cfg *promcfg.Config) {
+	testComponent(t, targets, false, "", featuregate.GlobalRegistry(), func(cfg *promcfg.Config) {
 		for _, scrapeConfig := range cfg.ScrapeConfigs {
 			scrapeConfig.MetricRelabelConfigs = []*relabel.Config{
 				{
@@ -101,7 +91,7 @@ func TestMetricRenamingKeepAction(t *testing.T) {
 		},
 	}
 
-	testComponent(t, targets, false, "", func(cfg *promcfg.Config) {
+	testComponent(t, targets, false, "", featuregate.GlobalRegistry(), func(cfg *promcfg.Config) {
 		for _, scrapeConfig := range cfg.ScrapeConfigs {
 			scrapeConfig.MetricRelabelConfigs = []*relabel.Config{
 				{
@@ -117,7 +107,7 @@ func TestMetricRenamingKeepAction(t *testing.T) {
 
 }
 
-func verifyRenameMetric(t *testing.T, td *testData, resourceMetrics []*pmetric.ResourceMetrics) {
+func verifyRenameMetric(t *testing.T, td *testData, resourceMetrics []pmetric.ResourceMetrics) {
 	verifyNumValidScrapeResults(t, td, resourceMetrics)
 	m1 := resourceMetrics[0]
 
@@ -130,7 +120,7 @@ func verifyRenameMetric(t *testing.T, td *testData, resourceMetrics []*pmetric.R
 	ts1 := getTS(metrics1)
 	e1 := []testExpectation{
 		assertMetricPresent("foo",
-			compareMetricType(pmetric.MetricDataTypeGauge),
+			compareMetricType(pmetric.MetricTypeGauge),
 			[]dataPointExpectation{
 				{
 					numberPointComparator: []numberPointComparator{
@@ -149,7 +139,7 @@ func verifyRenameMetric(t *testing.T, td *testData, resourceMetrics []*pmetric.R
 			}),
 		// renaming config converts any metric type to untyped metric, which then gets converted to gauge double type by metric builder
 		assertMetricPresent("http_requests_total",
-			compareMetricType(pmetric.MetricDataTypeGauge),
+			compareMetricType(pmetric.MetricTypeGauge),
 			[]dataPointExpectation{
 				{
 					numberPointComparator: []numberPointComparator{
@@ -171,7 +161,7 @@ func verifyRenameMetric(t *testing.T, td *testData, resourceMetrics []*pmetric.R
 	doCompare(t, "scrape-metricRename-1", wantAttributes, m1, e1)
 }
 
-func verifyRenameMetricKeepAction(t *testing.T, td *testData, resourceMetrics []*pmetric.ResourceMetrics) {
+func verifyRenameMetricKeepAction(t *testing.T, td *testData, resourceMetrics []pmetric.ResourceMetrics) {
 	verifyNumValidScrapeResults(t, td, resourceMetrics)
 	m1 := resourceMetrics[0]
 
@@ -184,7 +174,7 @@ func verifyRenameMetricKeepAction(t *testing.T, td *testData, resourceMetrics []
 	ts1 := getTS(metrics1)
 	e1 := []testExpectation{
 		assertMetricPresent("rpc_duration_total",
-			compareMetricType(pmetric.MetricDataTypeSum),
+			compareMetricType(pmetric.MetricTypeSum),
 			[]dataPointExpectation{
 				{
 					numberPointComparator: []numberPointComparator{
@@ -204,7 +194,7 @@ func verifyRenameMetricKeepAction(t *testing.T, td *testData, resourceMetrics []
 			}),
 		assertMetricAbsent("http_go_threads"),
 		assertMetricAbsent("http_connected_total"),
-		assertMetricAbsent("redis_http_request_total"),
+		assertMetricAbsent("redis_http_requests_total"),
 	}
 	doCompare(t, "scrape-metricRenameKeepAction-1", wantAttributes, m1, e1)
 }
@@ -240,7 +230,7 @@ func TestLabelRenaming(t *testing.T) {
 		},
 	}
 
-	testComponent(t, targets, false, "", func(cfg *promcfg.Config) {
+	testComponent(t, targets, false, "", featuregate.GlobalRegistry(), func(cfg *promcfg.Config) {
 		for _, scrapeConfig := range cfg.ScrapeConfigs {
 			scrapeConfig.MetricRelabelConfigs = []*relabel.Config{
 				{
@@ -278,7 +268,7 @@ func TestLabelRenaming(t *testing.T) {
 
 }
 
-func verifyRenameLabel(t *testing.T, td *testData, resourceMetrics []*pmetric.ResourceMetrics) {
+func verifyRenameLabel(t *testing.T, td *testData, resourceMetrics []pmetric.ResourceMetrics) {
 	verifyNumValidScrapeResults(t, td, resourceMetrics)
 	m1 := resourceMetrics[0]
 
@@ -291,7 +281,7 @@ func verifyRenameLabel(t *testing.T, td *testData, resourceMetrics []*pmetric.Re
 	ts1 := getTS(metrics1)
 	e1 := []testExpectation{
 		assertMetricPresent("http_go_threads",
-			compareMetricType(pmetric.MetricDataTypeGauge),
+			compareMetricType(pmetric.MetricTypeGauge),
 			[]dataPointExpectation{
 				{
 					numberPointComparator: []numberPointComparator{
@@ -302,7 +292,7 @@ func verifyRenameLabel(t *testing.T, td *testData, resourceMetrics []*pmetric.Re
 				},
 			}),
 		assertMetricPresent("http_connected_total",
-			compareMetricType(pmetric.MetricDataTypeSum),
+			compareMetricType(pmetric.MetricTypeSum),
 			[]dataPointExpectation{
 				{
 					numberPointComparator: []numberPointComparator{
@@ -313,7 +303,7 @@ func verifyRenameLabel(t *testing.T, td *testData, resourceMetrics []*pmetric.Re
 				},
 			}),
 		assertMetricPresent("redis_http_requests_total",
-			compareMetricType(pmetric.MetricDataTypeSum),
+			compareMetricType(pmetric.MetricTypeSum),
 			[]dataPointExpectation{
 				{
 					numberPointComparator: []numberPointComparator{
@@ -333,7 +323,7 @@ func verifyRenameLabel(t *testing.T, td *testData, resourceMetrics []*pmetric.Re
 				},
 			}),
 		assertMetricPresent("rpc_duration_total",
-			compareMetricType(pmetric.MetricDataTypeSum),
+			compareMetricType(pmetric.MetricTypeSum),
 			[]dataPointExpectation{
 				{
 					numberPointComparator: []numberPointComparator{
@@ -366,7 +356,7 @@ func TestLabelRenamingKeepAction(t *testing.T) {
 		},
 	}
 
-	testComponent(t, targets, false, "", func(cfg *promcfg.Config) {
+	testComponent(t, targets, false, "", featuregate.GlobalRegistry(), func(cfg *promcfg.Config) {
 		for _, scrapeConfig := range cfg.ScrapeConfigs {
 			scrapeConfig.MetricRelabelConfigs = []*relabel.Config{
 				{
@@ -381,7 +371,7 @@ func TestLabelRenamingKeepAction(t *testing.T) {
 
 }
 
-func verifyRenameLabelKeepAction(t *testing.T, td *testData, resourceMetrics []*pmetric.ResourceMetrics) {
+func verifyRenameLabelKeepAction(t *testing.T, td *testData, resourceMetrics []pmetric.ResourceMetrics) {
 	verifyNumValidScrapeResults(t, td, resourceMetrics)
 	m1 := resourceMetrics[0]
 
@@ -394,7 +384,7 @@ func verifyRenameLabelKeepAction(t *testing.T, td *testData, resourceMetrics []*
 	ts1 := getTS(metrics1)
 	e1 := []testExpectation{
 		assertMetricPresent("http_go_threads",
-			compareMetricType(pmetric.MetricDataTypeGauge),
+			compareMetricType(pmetric.MetricTypeGauge),
 			[]dataPointExpectation{
 				{
 					numberPointComparator: []numberPointComparator{
@@ -405,7 +395,7 @@ func verifyRenameLabelKeepAction(t *testing.T, td *testData, resourceMetrics []*
 				},
 			}),
 		assertMetricPresent("http_connected_total",
-			compareMetricType(pmetric.MetricDataTypeSum),
+			compareMetricType(pmetric.MetricTypeSum),
 			[]dataPointExpectation{
 				{
 					numberPointComparator: []numberPointComparator{
@@ -415,8 +405,8 @@ func verifyRenameLabelKeepAction(t *testing.T, td *testData, resourceMetrics []*
 					},
 				},
 			}),
-		assertMetricPresent(" Redis connected clients",
-			compareMetricType(pmetric.MetricDataTypeSum),
+		assertMetricPresent("redis_http_requests_total",
+			compareMetricType(pmetric.MetricTypeSum),
 			[]dataPointExpectation{
 				{
 					numberPointComparator: []numberPointComparator{
@@ -433,8 +423,8 @@ func verifyRenameLabelKeepAction(t *testing.T, td *testData, resourceMetrics []*
 					},
 				},
 			}),
-		assertMetricPresent("RPC clients",
-			compareMetricType(pmetric.MetricDataTypeSum),
+		assertMetricPresent("rpc_duration_total",
+			compareMetricType(pmetric.MetricTypeSum),
 			[]dataPointExpectation{
 				{
 					numberPointComparator: []numberPointComparator{

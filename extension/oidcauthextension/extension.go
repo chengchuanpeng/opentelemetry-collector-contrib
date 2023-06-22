@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package oidcauthextension // import "github.com/open-telemetry/opentelemetry-collector-contrib/extension/oidcauthextension"
 
@@ -21,9 +10,9 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -31,7 +20,7 @@ import (
 	"github.com/coreos/go-oidc"
 	"go.opentelemetry.io/collector/client"
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config/configauth"
+	"go.opentelemetry.io/collector/extension/auth"
 	"go.uber.org/zap"
 )
 
@@ -55,7 +44,7 @@ var (
 	errNotAuthenticated                  = errors.New("authentication didn't succeed")
 )
 
-func newExtension(cfg *Config, logger *zap.Logger) (configauth.ServerAuthenticator, error) {
+func newExtension(cfg *Config, logger *zap.Logger) (auth.Server, error) {
 	if cfg.Audience == "" {
 		return nil, errNoAudienceProvided
 	}
@@ -71,7 +60,7 @@ func newExtension(cfg *Config, logger *zap.Logger) (configauth.ServerAuthenticat
 		cfg:    cfg,
 		logger: logger,
 	}
-	return configauth.NewServerAuthenticator(configauth.WithStart(oe.start), configauth.WithAuthenticate(oe.authenticate)), nil
+	return auth.NewServer(auth.WithServerStart(oe.start), auth.WithServerAuthenticate(oe.authenticate)), nil
 }
 
 func (e *oidcExtension) start(context.Context, component.Host) error {
@@ -90,7 +79,8 @@ func (e *oidcExtension) start(context.Context, component.Host) error {
 
 // authenticate checks whether the given context contains valid auth data. Successfully authenticated calls will always return a nil error and a context with the auth data.
 func (e *oidcExtension) authenticate(ctx context.Context, headers map[string][]string) (context.Context, error) {
-	authHeaders := headers[e.cfg.Attribute]
+	metadata := client.NewMetadata(headers)
+	authHeaders := metadata.Get(e.cfg.Attribute)
 	if len(authHeaders) == 0 {
 		return ctx, errNotAuthenticated
 	}
@@ -219,7 +209,7 @@ func getIssuerCACertFromPath(path string) (*x509.Certificate, error) {
 		return nil, nil
 	}
 
-	rawCA, err := ioutil.ReadFile(filepath.Clean(path))
+	rawCA, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return nil, fmt.Errorf("could not read the CA file %q: %w", path, err)
 	}

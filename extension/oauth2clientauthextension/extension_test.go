@@ -1,18 +1,6 @@
-// Copyright  The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
-// nolint:errcheck
 package oauth2clientauthextension
 
 import (
@@ -131,7 +119,7 @@ func TestOAuthClientSettings(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, test.settings.Scopes, rc.clientCredentials.Scopes)
 			assert.Equal(t, test.settings.TokenURL, rc.clientCredentials.TokenURL)
-			assert.Equal(t, test.settings.ClientSecret, rc.clientCredentials.ClientSecret)
+			assert.EqualValues(t, test.settings.ClientSecret, rc.clientCredentials.ClientSecret)
 			assert.Equal(t, test.settings.ClientID, rc.clientCredentials.ClientID)
 			assert.Equal(t, test.settings.Timeout, rc.client.Timeout)
 			assert.Equal(t, test.settings.EndpointParams, rc.clientCredentials.EndpointParams)
@@ -259,7 +247,8 @@ func TestOAuth2PerRPCCredentials(t *testing.T) {
 func TestFailContactingOAuth(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
-		w.Write([]byte("not-json"))
+		_, err := w.Write([]byte("not-json"))
+		assert.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -289,7 +278,7 @@ func TestFailContactingOAuth(t *testing.T) {
 		},
 	}
 
-	client, _ := setting.ToClient(componenttest.NewNopHost().GetExtensions(), componenttest.NewNopTelemetrySettings())
+	client, _ := setting.ToClient(componenttest.NewNopHost(), componenttest.NewNopTelemetrySettings())
 	req, err := http.NewRequest("POST", setting.Endpoint, nil)
 	assert.NoError(t, err)
 	_, err = client.Do(req)

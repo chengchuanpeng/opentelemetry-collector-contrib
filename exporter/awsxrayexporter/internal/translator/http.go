@@ -1,16 +1,5 @@
-// Copyright 2019, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package translator // import "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/awsxrayexporter/internal/translator"
 
@@ -45,61 +34,61 @@ func makeHTTP(span ptrace.Span) (map[string]pcommon.Value, *awsxray.HTTPData) {
 	span.Attributes().Range(func(key string, value pcommon.Value) bool {
 		switch key {
 		case conventions.AttributeHTTPMethod:
-			info.Request.Method = awsxray.String(value.StringVal())
+			info.Request.Method = awsxray.String(value.Str())
 			hasHTTP = true
 		case conventions.AttributeHTTPClientIP:
-			info.Request.ClientIP = awsxray.String(value.StringVal())
+			info.Request.ClientIP = awsxray.String(value.Str())
 			info.Request.XForwardedFor = aws.Bool(true)
 			hasHTTP = true
 		case conventions.AttributeHTTPUserAgent:
-			info.Request.UserAgent = awsxray.String(value.StringVal())
+			info.Request.UserAgent = awsxray.String(value.Str())
 			hasHTTP = true
 		case conventions.AttributeHTTPStatusCode:
-			info.Response.Status = aws.Int64(value.IntVal())
+			info.Response.Status = aws.Int64(value.Int())
 			hasHTTP = true
 		case conventions.AttributeHTTPURL:
-			urlParts[key] = value.StringVal()
+			urlParts[key] = value.Str()
 			hasHTTP = true
 			hasHTTPRequestURLAttributes = true
 		case conventions.AttributeHTTPScheme:
-			urlParts[key] = value.StringVal()
+			urlParts[key] = value.Str()
 			hasHTTP = true
 		case conventions.AttributeHTTPHost:
-			urlParts[key] = value.StringVal()
+			urlParts[key] = value.Str()
 			hasHTTP = true
 			hasHTTPRequestURLAttributes = true
 		case conventions.AttributeHTTPTarget:
-			urlParts[key] = value.StringVal()
+			urlParts[key] = value.Str()
 			hasHTTP = true
 		case conventions.AttributeHTTPServerName:
-			urlParts[key] = value.StringVal()
+			urlParts[key] = value.Str()
 			hasHTTP = true
 			hasHTTPRequestURLAttributes = true
 		case conventions.AttributeNetHostPort:
-			urlParts[key] = value.StringVal()
+			urlParts[key] = value.Str()
 			hasHTTP = true
 			if len(urlParts[key]) == 0 {
-				urlParts[key] = strconv.FormatInt(value.IntVal(), 10)
+				urlParts[key] = strconv.FormatInt(value.Int(), 10)
 			}
 		case conventions.AttributeHostName:
-			urlParts[key] = value.StringVal()
+			urlParts[key] = value.Str()
 			hasHTTPRequestURLAttributes = true
 		case conventions.AttributeNetHostName:
-			urlParts[key] = value.StringVal()
+			urlParts[key] = value.Str()
 			hasHTTPRequestURLAttributes = true
 		case conventions.AttributeNetPeerName:
-			urlParts[key] = value.StringVal()
+			urlParts[key] = value.Str()
 		case conventions.AttributeNetPeerPort:
-			urlParts[key] = value.StringVal()
+			urlParts[key] = value.Str()
 			if len(urlParts[key]) == 0 {
-				urlParts[key] = strconv.FormatInt(value.IntVal(), 10)
+				urlParts[key] = strconv.FormatInt(value.Int(), 10)
 			}
 		case conventions.AttributeNetPeerIP:
 			// Prefer HTTP forwarded information (AttributeHTTPClientIP) when present.
 			if info.Request.ClientIP == nil {
-				info.Request.ClientIP = awsxray.String(value.StringVal())
+				info.Request.ClientIP = awsxray.String(value.Str())
 			}
-			urlParts[key] = value.StringVal()
+			urlParts[key] = value.Str()
 			hasHTTPRequestURLAttributes = true
 		default:
 			filtered[key] = value
@@ -143,9 +132,9 @@ func extractResponseSizeFromEvents(span ptrace.Span) int64 {
 
 func extractResponseSizeFromAttributes(attributes pcommon.Map) int64 {
 	typeVal, ok := attributes.Get("message.type")
-	if ok && typeVal.StringVal() == "RECEIVED" {
+	if ok && typeVal.Str() == "RECEIVED" {
 		if sizeVal, ok := attributes.Get(conventions.AttributeMessagingMessagePayloadSizeBytes); ok {
-			return sizeVal.IntVal()
+			return sizeVal.Int()
 		}
 	}
 	return 0

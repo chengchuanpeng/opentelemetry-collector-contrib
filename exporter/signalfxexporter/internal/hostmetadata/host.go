@@ -1,16 +1,5 @@
-// Copyright OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Taken from https://github.com/signalfx/golib/blob/master/metadata/hostmetadata/host.go
 // with minor modifications.
@@ -20,7 +9,6 @@ package hostmetadata // import "github.com/open-telemetry/opentelemetry-collecto
 import (
 	"context"
 	"errors"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -153,13 +141,13 @@ func getLinuxVersion() (string, error) {
 	if value, err := getStringFromFile(`PRETTY_NAME="(.*)"`, filepath.Join(etc, "os-release")); err == nil {
 		return value, nil
 	}
-	if value, err := ioutil.ReadFile(filepath.Join(etc, "centos-release")); err == nil {
+	if value, err := os.ReadFile(filepath.Join(etc, "centos-release")); err == nil {
 		return string(value), nil
 	}
-	if value, err := ioutil.ReadFile(filepath.Join(etc, "redhat-release")); err == nil {
+	if value, err := os.ReadFile(filepath.Join(etc, "redhat-release")); err == nil {
 		return string(value), nil
 	}
-	if value, err := ioutil.ReadFile(filepath.Join(etc, "system-release")); err == nil {
+	if value, err := os.ReadFile(filepath.Join(etc, "system-release")); err == nil {
 		return string(value), nil
 	}
 	return "", errors.New("unable to find linux version")
@@ -192,7 +180,7 @@ func getStringFromFile(pattern string, path string) (string, error) {
 	var err error
 	var file []byte
 	var reg = regexp.MustCompile(pattern)
-	if file, err = ioutil.ReadFile(path); err == nil {
+	if file, err = os.ReadFile(path); err == nil {
 		if match := reg.FindSubmatch(file); len(match) > 1 {
 			return string(match[1]), nil
 		}

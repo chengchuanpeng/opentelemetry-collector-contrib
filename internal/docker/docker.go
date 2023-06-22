@@ -1,22 +1,12 @@
-// Copyright 2020 OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package docker // import "github.com/open-telemetry/opentelemetry-collector-contrib/internal/docker"
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -55,11 +45,13 @@ type Client struct {
 	logger               *zap.Logger
 }
 
-func NewDockerClient(config *Config, logger *zap.Logger) (*Client, error) {
+func NewDockerClient(config *Config, logger *zap.Logger, opts ...docker.Opt) (*Client, error) {
 	client, err := docker.NewClientWithOpts(
-		docker.WithHost(config.Endpoint),
-		docker.WithVersion(fmt.Sprintf("v%v", config.DockerAPIVersion)),
-		docker.WithHTTPHeaders(map[string]string{"User-Agent": userAgent}),
+		append([]docker.Opt{
+			docker.WithHost(config.Endpoint),
+			docker.WithVersion(fmt.Sprintf("v%v", config.DockerAPIVersion)),
+			docker.WithHTTPHeaders(map[string]string{"User-Agent": userAgent}),
+		}, opts...)...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("could not create docker client: %w", err)
@@ -188,7 +180,7 @@ func (dc *Client) toStatsJSON(
 	containerStats.Body.Close()
 	if err != nil {
 		// EOF means there aren't any containerStats, perhaps because the container has been removed.
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			// It isn't indicative of actual error.
 			return nil, err
 		}
@@ -215,6 +207,7 @@ func (dc *Client) ContainerEventLoop(ctx context.Context) {
 		{Key: "event", Value: "destroy"},
 		{Key: "event", Value: "die"},
 		{Key: "event", Value: "pause"},
+		{Key: "event", Value: "rename"},
 		{Key: "event", Value: "stop"},
 		{Key: "event", Value: "start"},
 		{Key: "event", Value: "unpause"},

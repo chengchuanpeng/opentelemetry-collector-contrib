@@ -1,28 +1,18 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package internal_test
 
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,11 +23,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config"
-	"go.opentelemetry.io/collector/config/mapprovider/filemapprovider"
+	"go.opentelemetry.io/collector/confmap"
+	"go.opentelemetry.io/collector/confmap/provider/fileprovider"
+	"go.opentelemetry.io/collector/exporter"
+	"go.opentelemetry.io/collector/otelcol"
+	"go.opentelemetry.io/collector/processor"
 	"go.opentelemetry.io/collector/processor/batchprocessor"
-	"go.opentelemetry.io/collector/service"
-	"go.uber.org/atomic"
+	"go.opentelemetry.io/collector/receiver"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -57,7 +49,7 @@ func TestStalenessMarkersEndToEnd(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// 1. Setup the server that sends series that intermittently appear and disappear.
-	n := atomic.NewUint64(0)
+	n := &atomic.Uint64{}
 	scrapeServer := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		// Increment the scrape count atomically per scrape.
 		i := n.Add(1)
@@ -85,26 +77,21 @@ jvm_memory_pool_bytes_used{pool="CodeHeap 'non-nmethods'"} %.1f`, float64(i))
 	defer scrapeServer.Close()
 
 	serverURL, err := url.Parse(scrapeServer.URL)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	// 2. Set up the Prometheus RemoteWrite endpoint.
 	prweUploads := make(chan *prompb.WriteRequest)
 	prweServer := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		// Snappy decode the uploads.
-		payload, rerr := ioutil.ReadAll(req.Body)
-		if err != nil {
-			panic(rerr)
-		}
+		payload, rerr := io.ReadAll(req.Body)
+		require.NoError(t, rerr)
+
 		recv := make([]byte, len(payload))
 		decoded, derr := snappy.Decode(recv, payload)
-		if err != nil {
-			panic(derr)
-		}
+		require.NoError(t, derr)
 
 		writeReq := new(prompb.WriteRequest)
-		if uerr := proto.Unmarshal(decoded, writeReq); uerr != nil {
-			panic(uerr)
-		}
+		require.NoError(t, proto.Unmarshal(decoded, writeReq))
 
 		select {
 		case <-ctx.Done():
@@ -121,7 +108,7 @@ receivers:
     config:
       scrape_configs:
         - job_name: 'test'
-          scrape_interval: 2ms
+          scrape_interval: 100ms
           static_configs:
             - targets: [%q]
 
@@ -140,34 +127,36 @@ service:
       processors: [batch]
       exporters: [prometheusremotewrite]`, serverURL.Host, prweServer.URL)
 
-	confFile, err := ioutil.TempFile(os.TempDir(), "conf-")
+	confFile, err := os.CreateTemp(os.TempDir(), "conf-")
 	require.Nil(t, err)
 	defer os.Remove(confFile.Name())
 	_, err = confFile.Write([]byte(cfg))
 	require.Nil(t, err)
 	// 4. Run the OpenTelemetry Collector.
-	receivers, err := component.MakeReceiverFactoryMap(prometheusreceiver.NewFactory())
+	receivers, err := receiver.MakeFactoryMap(prometheusreceiver.NewFactory())
 	require.Nil(t, err)
-	exporters, err := component.MakeExporterFactoryMap(prometheusremotewriteexporter.NewFactory())
+	exporters, err := exporter.MakeFactoryMap(prometheusremotewriteexporter.NewFactory())
 	require.Nil(t, err)
-	processors, err := component.MakeProcessorFactoryMap(batchprocessor.NewFactory())
+	processors, err := processor.MakeFactoryMap(batchprocessor.NewFactory())
 	require.Nil(t, err)
 
-	factories := component.Factories{
+	factories := otelcol.Factories{
 		Receivers:  receivers,
 		Exporters:  exporters,
 		Processors: processors,
 	}
 
-	fmp := filemapprovider.New()
-	configProvider, err := service.NewConfigProvider(
-		service.ConfigProviderSettings{
-			Locations:    []string{confFile.Name()},
-			MapProviders: map[string]config.MapProvider{fmp.Scheme(): fmp},
+	fmp := fileprovider.New()
+	configProvider, err := otelcol.NewConfigProvider(
+		otelcol.ConfigProviderSettings{
+			ResolverSettings: confmap.ResolverSettings{
+				URIs:      []string{confFile.Name()},
+				Providers: map[string]confmap.Provider{fmp.Scheme(): fmp},
+			},
 		})
 	require.NoError(t, err)
 
-	appSettings := service.CollectorSettings{
+	appSettings := otelcol.CollectorSettings{
 		Factories:      factories,
 		ConfigProvider: configProvider,
 		BuildInfo: component.BuildInfo{
@@ -183,13 +172,11 @@ service:
 		},
 	}
 
-	app, err := service.New(appSettings)
+	app, err := otelcol.NewCollector(appSettings)
 	require.Nil(t, err)
 
 	go func() {
-		if err = app.Run(context.Background()); err != nil {
-			t.Error(err)
-		}
+		assert.NoError(t, app.Run(context.Background()))
 	}()
 	defer app.Shutdown()
 
@@ -197,7 +184,7 @@ service:
 	for notYetStarted := true; notYetStarted; {
 		state := app.GetState()
 		switch state {
-		case service.Running, service.Closed, service.Closing:
+		case otelcol.StateRunning, otelcol.StateClosed, otelcol.StateClosing:
 			notYetStarted = false
 		}
 		time.Sleep(10 * time.Millisecond)

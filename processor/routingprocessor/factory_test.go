@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package routingprocessor
 
@@ -23,24 +12,32 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/component/componenttest"
-	"go.opentelemetry.io/collector/config"
 	"go.opentelemetry.io/collector/config/configgrpc"
+	"go.opentelemetry.io/collector/confmap/confmaptest"
 	"go.opentelemetry.io/collector/consumer/consumertest"
+	"go.opentelemetry.io/collector/exporter/exportertest"
 	"go.opentelemetry.io/collector/exporter/otlpexporter"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/processor/processorhelper"
-	"go.opentelemetry.io/collector/service/servicetest"
+	"go.opentelemetry.io/collector/processor/processortest"
+	"go.opentelemetry.io/otel/metric/noop"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
+
+var noopTelemetrySettings = component.TelemetrySettings{
+	TracerProvider: trace.NewNoopTracerProvider(),
+	MeterProvider:  noop.NewMeterProvider(),
+	Logger:         zap.NewNop(),
+}
 
 func TestProcessorGetsCreatedWithValidConfiguration(t *testing.T) {
 	// prepare
 	factory := NewFactory()
-	creationParams := componenttest.NewNopProcessorCreateSettings()
+	creationParams := processortest.NewNopCreateSettings()
 	cfg := &Config{
-		ProcessorSettings: config.NewProcessorSettings(config.NewComponentID(typeStr)),
-		DefaultExporters:  []string{"otlp"},
-		FromAttribute:     "X-Tenant",
+		DefaultExporters: []string{"otlp"},
+		FromAttribute:    "X-Tenant",
 		Table: []RoutingTableItem{
 			{
 				Value:     "acme",
@@ -73,38 +70,35 @@ func TestProcessorGetsCreatedWithValidConfiguration(t *testing.T) {
 
 func TestFailOnEmptyConfiguration(t *testing.T) {
 	cfg := NewFactory().CreateDefaultConfig()
-	assert.ErrorIs(t, cfg.Validate(), errNoTableItems)
+	assert.ErrorIs(t, component.ValidateConfig(cfg), errNoTableItems)
 }
 
 func TestProcessorFailsToBeCreatedWhenRouteHasNoExporters(t *testing.T) {
 	// prepare
 	cfg := &Config{
-		ProcessorSettings: config.NewProcessorSettings(config.NewComponentID(typeStr)),
-		DefaultExporters:  []string{"otlp"},
-		FromAttribute:     "X-Tenant",
+		DefaultExporters: []string{"otlp"},
+		FromAttribute:    "X-Tenant",
 		Table: []RoutingTableItem{
 			{
 				Value: "acme",
 			},
 		},
 	}
-	assert.ErrorIs(t, cfg.Validate(), errNoExporters)
+	assert.ErrorIs(t, component.ValidateConfig(cfg), errNoExporters)
 }
 
 func TestProcessorFailsToBeCreatedWhenNoRoutesExist(t *testing.T) {
 	cfg := &Config{
-		ProcessorSettings: config.NewProcessorSettings(config.NewComponentID(typeStr)),
-		DefaultExporters:  []string{"otlp"},
-		FromAttribute:     "X-Tenant",
-		Table:             []RoutingTableItem{},
+		DefaultExporters: []string{"otlp"},
+		FromAttribute:    "X-Tenant",
+		Table:            []RoutingTableItem{},
 	}
-	assert.ErrorIs(t, cfg.Validate(), errNoTableItems)
+	assert.ErrorIs(t, component.ValidateConfig(cfg), errNoTableItems)
 }
 
 func TestProcessorFailsWithNoFromAttribute(t *testing.T) {
 	cfg := &Config{
-		ProcessorSettings: config.NewProcessorSettings(config.NewComponentID(typeStr)),
-		DefaultExporters:  []string{"otlp"},
+		DefaultExporters: []string{"otlp"},
 		Table: []RoutingTableItem{
 			{
 				Value:     "acme",
@@ -112,17 +106,16 @@ func TestProcessorFailsWithNoFromAttribute(t *testing.T) {
 			},
 		},
 	}
-	assert.ErrorIs(t, cfg.Validate(), errNoMissingFromAttribute)
+	assert.ErrorIs(t, component.ValidateConfig(cfg), errNoMissingFromAttribute)
 }
 
 func TestShouldNotFailWhenNextIsProcessor(t *testing.T) {
 	// prepare
 	factory := NewFactory()
-	creationParams := componenttest.NewNopProcessorCreateSettings()
+	creationParams := processortest.NewNopCreateSettings()
 	cfg := &Config{
-		ProcessorSettings: config.NewProcessorSettings(config.NewComponentID(typeStr)),
-		DefaultExporters:  []string{"otlp"},
-		FromAttribute:     "X-Tenant",
+		DefaultExporters: []string{"otlp"},
+		FromAttribute:    "X-Tenant",
 		Table: []RoutingTableItem{
 			{
 				Value:     "acme",
@@ -131,7 +124,8 @@ func TestShouldNotFailWhenNextIsProcessor(t *testing.T) {
 		},
 	}
 	mp := &mockProcessor{}
-	next, err := processorhelper.NewTracesProcessor(cfg, consumertest.NewNop(), mp.processTraces)
+
+	next, err := processorhelper.NewTracesProcessor(context.Background(), processortest.NewNopCreateSettings(), cfg, consumertest.NewNop(), mp.processTraces)
 	require.NoError(t, err)
 
 	// test
@@ -143,63 +137,58 @@ func TestShouldNotFailWhenNextIsProcessor(t *testing.T) {
 }
 
 func TestProcessorDoesNotFailToBuildExportersWithMultiplePipelines(t *testing.T) {
-	// prepare
-	factories, err := componenttest.NopFactories()
-	assert.NoError(t, err)
-
-	processorFactory := NewFactory()
-	factories.Processors[typeStr] = processorFactory
-
 	otlpExporterFactory := otlpexporter.NewFactory()
-	factories.Exporters["otlp"] = otlpExporterFactory
-
 	otlpConfig := &otlpexporter.Config{
-		ExporterSettings: config.NewExporterSettings(config.NewComponentID("otlp")),
 		GRPCClientSettings: configgrpc.GRPCClientSettings{
 			Endpoint: "example.com:1234",
 		},
 	}
 
-	otlpTracesExporter, err := otlpExporterFactory.CreateTracesExporter(context.Background(), componenttest.NewNopExporterCreateSettings(), otlpConfig)
+	otlpTracesExporter, err := otlpExporterFactory.CreateTracesExporter(context.Background(), exportertest.NewNopCreateSettings(), otlpConfig)
 	require.NoError(t, err)
 
-	otlpMetricsExporter, err := otlpExporterFactory.CreateMetricsExporter(context.Background(), componenttest.NewNopExporterCreateSettings(), otlpConfig)
+	otlpMetricsExporter, err := otlpExporterFactory.CreateMetricsExporter(context.Background(), exportertest.NewNopCreateSettings(), otlpConfig)
 	require.NoError(t, err)
 
-	host := &mockHost{
-		Host: componenttest.NewNopHost(),
-		GetExportersFunc: func() map[config.DataType]map[config.ComponentID]component.Exporter {
-			return map[config.DataType]map[config.ComponentID]component.Exporter{
-				config.TracesDataType: {
-					config.NewComponentID("otlp/traces"): otlpTracesExporter,
-				},
-				config.MetricsDataType: {
-					config.NewComponentID("otlp/metrics"): otlpMetricsExporter,
-				},
-			}
+	host := newMockHost(map[component.DataType]map[component.ID]component.Component{
+		component.DataTypeTraces: {
+			component.NewID("otlp/traces"): otlpTracesExporter,
 		},
-	}
+		component.DataTypeMetrics: {
+			component.NewID("otlp/metrics"): otlpMetricsExporter,
+		},
+	})
 
-	cfg, err := servicetest.LoadConfigAndValidate(filepath.Join("testdata", "config_multipipelines.yaml"), factories)
-	assert.NoError(t, err)
+	cm, err := confmaptest.LoadConf(filepath.Join("testdata", "config.yaml"))
+	require.NoError(t, err)
 
-	for _, cfg := range cfg.Processors {
-		exp := newProcessor(zap.NewNop(), cfg)
-		err = exp.Start(context.Background(), host)
-		// assert that no error is thrown due to multiple pipelines and exporters not using the routing processor
-		assert.NoError(t, err)
-		assert.NoError(t, exp.Shutdown(context.Background()))
+	for k := range cm.ToStringMap() {
+		// Check if all processor variations that are defined in test config can be actually created
+		t.Run(k, func(t *testing.T) {
+			cfg := createDefaultConfig()
+
+			sub, err := cm.Sub(k)
+			require.NoError(t, err)
+			require.NoError(t, component.UnmarshalConfig(sub, cfg))
+
+			exp, err := newMetricProcessor(noopTelemetrySettings, cfg)
+			require.NoError(t, err)
+
+			err = exp.Start(context.Background(), host)
+			// assert that no error is thrown due to multiple pipelines and exporters not using the routing processor
+			assert.NoError(t, err)
+			assert.NoError(t, exp.Shutdown(context.Background()))
+		})
 	}
 }
 
 func TestShutdown(t *testing.T) {
 	// prepare
 	factory := NewFactory()
-	creationParams := componenttest.NewNopProcessorCreateSettings()
+	creationParams := processortest.NewNopCreateSettings()
 	cfg := &Config{
-		ProcessorSettings: config.NewProcessorSettings(config.NewComponentID(typeStr)),
-		DefaultExporters:  []string{"otlp"},
-		FromAttribute:     "X-Tenant",
+		DefaultExporters: []string{"otlp"},
+		FromAttribute:    "X-Tenant",
 		Table: []RoutingTableItem{
 			{
 				Value:     "acme",
@@ -223,4 +212,25 @@ type mockProcessor struct{}
 
 func (mp *mockProcessor) processTraces(context.Context, ptrace.Traces) (ptrace.Traces, error) {
 	return ptrace.NewTraces(), nil
+}
+
+type mockHost struct {
+	component.Host
+	exps map[component.DataType]map[component.ID]component.Component
+}
+
+func newMockHost(exps map[component.DataType]map[component.ID]component.Component) component.Host {
+	return &mockHost{
+		Host: componenttest.NewNopHost(),
+		exps: exps,
+	}
+}
+
+func (m *mockHost) GetExporters() map[component.DataType]map[component.ID]component.Component {
+	return m.exps
+}
+
+type mockComponent struct {
+	component.StartFunc
+	component.ShutdownFunc
 }

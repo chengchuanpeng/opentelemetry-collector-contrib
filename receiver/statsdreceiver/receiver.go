@@ -1,18 +1,6 @@
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
-// nolint:errcheck
 package statsdreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/statsdreceiver"
 
 import (
@@ -23,20 +11,21 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/collector/client"
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/component/componenterror"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.opentelemetry.io/collector/receiver"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/statsdreceiver/protocol"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/statsdreceiver/transport"
 )
 
-var _ component.MetricsReceiver = (*statsdReceiver)(nil)
+var _ receiver.Metrics = (*statsdReceiver)(nil)
 
-// statsdReceiver implements the component.MetricsReceiver for StatsD protocol.
+// statsdReceiver implements the receiver.Metrics for StatsD protocol.
 type statsdReceiver struct {
-	settings component.ReceiverCreateSettings
+	settings receiver.CreateSettings
 	config   *Config
 
 	server       transport.Server
@@ -48,19 +37,19 @@ type statsdReceiver struct {
 
 // New creates the StatsD receiver with the given parameters.
 func New(
-	set component.ReceiverCreateSettings,
+	set receiver.CreateSettings,
 	config Config,
 	nextConsumer consumer.Metrics,
-) (component.MetricsReceiver, error) {
+) (receiver.Metrics, error) {
 	if nextConsumer == nil {
-		return nil, componenterror.ErrNilNextConsumer
+		return nil, component.ErrNilNextConsumer
 	}
 
 	if config.NetAddr.Endpoint == "" {
 		config.NetAddr.Endpoint = "localhost:8125"
 	}
 
-	server, err := buildTransportServer(config)
+	rep, err := newReporter(set)
 	if err != nil {
 		return nil, err
 	}
@@ -69,8 +58,7 @@ func New(
 		settings:     set,
 		config:       &config,
 		nextConsumer: nextConsumer,
-		server:       server,
-		reporter:     newReporter(config.ID(), set),
+		reporter:     rep,
 		parser:       &protocol.StatsDParser{},
 	}
 	return r, nil
@@ -83,15 +71,27 @@ func buildTransportServer(config Config) (transport.Server, error) {
 		return transport.NewUDPServer(config.NetAddr.Endpoint)
 	}
 
-	return nil, fmt.Errorf("unsupported transport %q for receiver %v", config.NetAddr.Transport, config.ID())
+	return nil, fmt.Errorf("unsupported transport %q", config.NetAddr.Transport)
 }
 
 // Start starts a UDP server that can process StatsD messages.
 func (r *statsdReceiver) Start(ctx context.Context, host component.Host) error {
 	ctx, r.cancel = context.WithCancel(ctx)
-	var transferChan = make(chan string, 10)
+	server, err := buildTransportServer(*r.config)
+	if err != nil {
+		return err
+	}
+	r.server = server
+	transferChan := make(chan transport.Metric, 10)
 	ticker := time.NewTicker(r.config.AggregationInterval)
-	r.parser.Initialize(r.config.EnableMetricType, r.config.IsMonotonicCounter, r.config.TimerHistogramMapping)
+	err = r.parser.Initialize(
+		r.config.EnableMetricType,
+		r.config.IsMonotonicCounter,
+		r.config.TimerHistogramMapping,
+	)
+	if err != nil {
+		return err
+	}
 	go func() {
 		if err := r.server.ListenAndServe(r.parser, r.nextConsumer, r.reporter, transferChan); err != nil {
 			if !errors.Is(err, net.ErrClosed) {
@@ -103,12 +103,13 @@ func (r *statsdReceiver) Start(ctx context.Context, host component.Host) error {
 		for {
 			select {
 			case <-ticker.C:
-				metrics := r.parser.GetMetrics()
-				if metrics.ResourceMetrics().At(0).ScopeMetrics().Len() > 0 {
-					r.Flush(ctx, metrics, r.nextConsumer)
+				batchMetrics := r.parser.GetMetrics()
+				for _, batch := range batchMetrics {
+					batchCtx := client.NewContext(ctx, batch.Info)
+					r.Flush(batchCtx, batch.Metrics, r.nextConsumer)
 				}
-			case rawMetric := <-transferChan:
-				r.parser.Aggregate(rawMetric)
+			case metric := <-transferChan:
+				_ = r.parser.Aggregate(metric.Raw, metric.Addr)
 			case <-ctx.Done():
 				ticker.Stop()
 				return
@@ -121,16 +122,14 @@ func (r *statsdReceiver) Start(ctx context.Context, host component.Host) error {
 
 // Shutdown stops the StatsD receiver.
 func (r *statsdReceiver) Shutdown(context.Context) error {
+	if r.cancel == nil || r.server == nil {
+		return nil
+	}
 	err := r.server.Close()
 	r.cancel()
 	return err
 }
 
 func (r *statsdReceiver) Flush(ctx context.Context, metrics pmetric.Metrics, nextConsumer consumer.Metrics) error {
-	error := nextConsumer.ConsumeMetrics(ctx, metrics)
-	if error != nil {
-		return error
-	}
-
-	return nil
+	return nextConsumer.ConsumeMetrics(ctx, metrics)
 }

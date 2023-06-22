@@ -1,27 +1,21 @@
-// Copyright  The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package mongodbreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/mongodbreceiver"
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/confignet"
 	"go.opentelemetry.io/collector/config/configtls"
+	"go.opentelemetry.io/collector/confmap/confmaptest"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/mongodbreceiver/internal/metadata"
 )
 
 func TestValidate(t *testing.T) {
@@ -80,7 +74,7 @@ func TestValidate(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.desc, func(t *testing.T) {
-			hosts := []confignet.NetAddr{}
+			var hosts []confignet.NetAddr
 
 			for _, ep := range tc.endpoints {
 				hosts = append(hosts, confignet.NetAddr{
@@ -88,12 +82,12 @@ func TestValidate(t *testing.T) {
 				})
 			}
 
-			cfg := Config{
+			cfg := &Config{
 				Username: tc.username,
 				Password: tc.password,
 				Hosts:    hosts,
 			}
-			err := cfg.Validate()
+			err := component.ValidateConfig(cfg)
 			if tc.expected == nil {
 				require.Nil(t, err)
 			} else {
@@ -134,7 +128,7 @@ func TestBadTLSConfigs(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.desc, func(t *testing.T) {
-			cfg := Config{
+			cfg := &Config{
 				Username: "otel",
 				Password: "pword",
 				Hosts: []confignet.NetAddr{
@@ -144,7 +138,7 @@ func TestBadTLSConfigs(t *testing.T) {
 				},
 				TLSClientSetting: tc.tlsConfig,
 			}
-			err := cfg.Validate()
+			err := component.ValidateConfig(cfg)
 			if tc.expectError {
 				require.Error(t, err)
 			} else {
@@ -174,4 +168,49 @@ func TestOptions(t *testing.T) {
 		(2 * time.Minute).Milliseconds(),
 	)
 	require.Equal(t, "rs-1", *clientOptions.ReplicaSet)
+}
+
+func TestOptionsTLS(t *testing.T) {
+	// loading valid ca file
+	caFile := filepath.Join("testdata", "certs", "ca.crt")
+
+	cfg := &Config{
+		Hosts: []confignet.NetAddr{
+			{
+				Endpoint: "localhost:27017",
+			},
+		},
+		TLSClientSetting: configtls.TLSClientSetting{
+			Insecure: false,
+			TLSSetting: configtls.TLSSetting{
+				CAFile: caFile,
+			},
+		},
+	}
+	opts := cfg.ClientOptions()
+	require.NotNil(t, opts.TLSConfig)
+}
+
+func TestLoadConfig(t *testing.T) {
+	cm, err := confmaptest.LoadConf(filepath.Join("testdata", "config.yaml"))
+	require.NoError(t, err)
+
+	factory := NewFactory()
+	cfg := factory.CreateDefaultConfig()
+
+	sub, err := cm.Sub(component.NewIDWithName(metadata.Type, "").String())
+	require.NoError(t, err)
+	require.NoError(t, component.UnmarshalConfig(sub, cfg))
+
+	expected := factory.CreateDefaultConfig().(*Config)
+	expected.Hosts = []confignet.NetAddr{
+		{
+			Endpoint: "localhost:27017",
+		},
+	}
+	expected.Username = "otel"
+	expected.Password = "${env:MONGO_PASSWORD}"
+	expected.CollectionInterval = time.Minute
+
+	require.Equal(t, expected, cfg)
 }

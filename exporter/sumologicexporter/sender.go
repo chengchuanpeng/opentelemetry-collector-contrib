@@ -1,16 +1,5 @@
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package sumologicexporter // import "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/sumologicexporter"
 
@@ -176,7 +165,7 @@ func (s *sender) logToText(record plog.LogRecord) string {
 // logToJSON converts LogRecord to a json line, returns it and error eventually
 func (s *sender) logToJSON(record plog.LogRecord) (string, error) {
 	data := s.filter.filterOut(record.Attributes())
-	data.orig.Upsert(logKey, record.Body())
+	record.Body().CopyTo(data.orig.PutEmpty(logKey))
 
 	nextLine, err := json.Marshal(data.orig.AsRaw())
 	if err != nil {

@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package mockawsxrayreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/testbed/mockdatareceivers/mockawsxrayreceiver"
 
@@ -18,18 +7,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gorilla/mux"
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/component/componenterror"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/obsreport"
 	"go.opentelemetry.io/collector/pdata/ptrace"
+	"go.opentelemetry.io/collector/receiver"
 	"go.uber.org/zap"
 )
 
@@ -42,21 +32,34 @@ type MockAwsXrayReceiver struct {
 	server *http.Server
 
 	nextConsumer consumer.Traces
+	obsrecv      *obsreport.Receiver
+	httpsObsrecv *obsreport.Receiver
 }
 
 // New creates a new awsxrayreceiver.MockAwsXrayReceiver reference.
 func New(
 	nextConsumer consumer.Traces,
-	params component.ReceiverCreateSettings,
+	params receiver.CreateSettings,
 	config *Config) (*MockAwsXrayReceiver, error) {
 	if nextConsumer == nil {
-		return nil, componenterror.ErrNilNextConsumer
+		return nil, component.ErrNilNextConsumer
+	}
+
+	obsrecv, err := obsreport.NewReceiver(obsreport.ReceiverSettings{ReceiverID: params.ID, Transport: "http", ReceiverCreateSettings: params})
+	if err != nil {
+		return nil, err
+	}
+	httpsObsrecv, err := obsreport.NewReceiver(obsreport.ReceiverSettings{ReceiverID: params.ID, Transport: "https", ReceiverCreateSettings: params})
+	if err != nil {
+		return nil, err
 	}
 
 	ar := &MockAwsXrayReceiver{
 		logger:       params.Logger,
 		config:       config,
 		nextConsumer: nextConsumer,
+		obsrecv:      obsrecv,
+		httpsObsrecv: httpsObsrecv,
 	}
 	return ar, nil
 }
@@ -69,7 +72,7 @@ func (ar *MockAwsXrayReceiver) Start(_ context.Context, host component.Host) err
 	// set up the listener
 	ln, err := net.Listen("tcp", ar.config.Endpoint)
 	if err != nil {
-		return fmt.Errorf("failed to bind to address %s: %v", ar.config.Endpoint, err)
+		return fmt.Errorf("failed to bind to address %s: %w", ar.config.Endpoint, err)
 	}
 	ar.logger.Info(fmt.Sprintf("listen to address %s", ar.config.Endpoint))
 
@@ -78,7 +81,7 @@ func (ar *MockAwsXrayReceiver) Start(_ context.Context, host component.Host) err
 	nr.HandleFunc("/TraceSegments", ar.HTTPHandlerFunc)
 
 	// create a server with the handler
-	ar.server = &http.Server{Handler: nr}
+	ar.server = &http.Server{Handler: nr, ReadHeaderTimeout: 20 * time.Second}
 
 	// run the server on a routine
 	go func() {
@@ -93,14 +96,14 @@ func (ar *MockAwsXrayReceiver) Start(_ context.Context, host component.Host) err
 
 // handleRequest parses an http request containing aws json request and passes the count of the traces to next consumer
 func (ar *MockAwsXrayReceiver) handleRequest(req *http.Request) error {
-	transport := "http"
+	obsrecv := ar.obsrecv
+
 	if ar.config.TLSCredentials != nil {
-		transport = "https"
+		obsrecv = ar.httpsObsrecv
 	}
 
-	obsrecv := obsreport.NewReceiver(obsreport.ReceiverSettings{ReceiverID: ar.config.ID(), Transport: transport})
 	ctx := obsrecv.StartTracesOp(req.Context())
-	body, err := ioutil.ReadAll(req.Body)
+	body, err := io.ReadAll(req.Body)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -114,7 +117,7 @@ func (ar *MockAwsXrayReceiver) handleRequest(req *http.Request) error {
 	traces, _ := ToTraces(body)
 	sc := traces.SpanCount()
 
-	err = ar.nextConsumer.ConsumeTraces(ctx, *traces)
+	err = ar.nextConsumer.ConsumeTraces(ctx, traces)
 	obsrecv.EndTracesOp(ctx, typeStr, sc, err)
 	return err
 }
@@ -136,11 +139,11 @@ func (ar *MockAwsXrayReceiver) Shutdown(context.Context) error {
 	return ar.server.Close()
 }
 
-func ToTraces(rawSeg []byte) (*ptrace.Traces, error) {
+func ToTraces(rawSeg []byte) (ptrace.Traces, error) {
 	var result map[string]interface{}
 	err := json.Unmarshal(rawSeg, &result)
 	if err != nil {
-		return nil, err
+		return ptrace.Traces{}, err
 	}
 
 	records, ok := result["TraceSegmentDocuments"].([]interface{})
@@ -157,5 +160,5 @@ func ToTraces(rawSeg []byte) (*ptrace.Traces, error) {
 		ils.Spans().AppendEmpty()
 	}
 
-	return &traceData, nil
+	return traceData, nil
 }

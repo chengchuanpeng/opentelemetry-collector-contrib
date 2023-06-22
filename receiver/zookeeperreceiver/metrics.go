@@ -1,16 +1,5 @@
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package zookeeperreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/zookeeperreceiver"
 
@@ -47,12 +36,15 @@ const (
 
 	serverStateKey = "zk_server_state"
 	zkVersionKey   = "zk_version"
+
+	ruokKey = "ruok"
 )
 
 // metricCreator handles generation of metric and metric recording
 type metricCreator struct {
 	computedMetricStore map[string]int64
 	mb                  *metadata.MetricsBuilder
+	// Temporary feature gates while transitioning to metrics without a direction attribute
 }
 
 func newMetricCreator(mb *metadata.MetricsBuilder) *metricCreator {
@@ -99,6 +91,8 @@ func (m *metricCreator) recordDataPointsFunc(metric string) func(ts pcommon.Time
 		return m.mb.RecordZookeeperFileDescriptorLimitDataPoint
 	case fSyncThresholdExceedCountMetricKey:
 		return m.mb.RecordZookeeperFsyncExceededThresholdCountDataPoint
+	case ruokKey:
+		return m.mb.RecordZookeeperRuokDataPoint
 	case packetsReceivedMetricKey:
 		return func(ts pcommon.Timestamp, val int64) {
 			m.mb.RecordZookeeperPacketCountDataPoint(ts, val, metadata.AttributeDirectionReceived)

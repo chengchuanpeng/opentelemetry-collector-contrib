@@ -1,3 +1,8 @@
+#!/bin/bash -ex
+
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
 TESTS="$(make -s -C testbed list-stability-tests | xargs echo|sed 's/ /|/g')"
 
 TESTS=(${TESTS//|/ })
@@ -8,4 +13,4 @@ for i in "${!TESTS[@]}"; do
     MATRIX+="{\"test\":\"$curr\"},"
 done
 MATRIX+="]}"
-echo "::set-output name=stabilitytest_matrix::$MATRIX"
+echo "stabilitytest_matrix=$MATRIX" >> $GITHUB_OUTPUT

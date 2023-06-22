@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package prometheusremotewriteexporter // import "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/prometheusremotewriteexporter"
 
@@ -20,14 +9,14 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/gogo/protobuf/proto"
-	"github.com/hashicorp/go-multierror"
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/tidwall/wal"
-	"go.uber.org/atomic"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
@@ -81,8 +70,8 @@ func newWAL(walConfig *WALConfig, exportSink func(context.Context, []*prompb.Wri
 		exportSink: exportSink,
 		walConfig:  walConfig,
 		stopChan:   make(chan struct{}),
-		rWALIndex:  atomic.NewUint64(0),
-		wWALIndex:  atomic.NewUint64(0),
+		rWALIndex:  &atomic.Uint64{},
+		wWALIndex:  &atomic.Uint64{},
 	}, nil
 }
 
@@ -204,7 +193,7 @@ func (prwe *prweWAL) continuallyPopWALThenExport(ctx context.Context, signalStar
 		// Keeping it within a closure to ensure that the later
 		// updated value of reqL is always flushed to disk.
 		if errL := prwe.exportSink(ctx, reqL); errL != nil {
-			err = multierror.Append(err, errL)
+			err = multierr.Append(err, errL)
 		}
 	}()
 
@@ -285,7 +274,7 @@ func (prwe *prweWAL) syncAndTruncateFront() error {
 	}
 	// Truncate the WAL from the front for the entries that we already
 	// read from the WAL and had already exported.
-	if err := prwe.wal.TruncateFront(prwe.rWALIndex.Load()); err != nil && err != wal.ErrOutOfRange {
+	if err := prwe.wal.TruncateFront(prwe.rWALIndex.Load()); err != nil && !errors.Is(err, wal.ErrOutOfRange) {
 		return err
 	}
 	return nil

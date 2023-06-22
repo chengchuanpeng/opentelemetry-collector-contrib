@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package splunk // import "github.com/open-telemetry/opentelemetry-collector-contrib/internal/splunk"
 
@@ -57,22 +46,22 @@ func ResourceToHostID(res pcommon.Resource) (HostID, bool) {
 	}
 
 	if attr, ok := attrs.Get(conventions.AttributeCloudAccountID); ok {
-		cloudAccount = attr.StringVal()
+		cloudAccount = attr.Str()
 	}
 
 	if attr, ok := attrs.Get(conventions.AttributeHostID); ok {
-		hostID = attr.StringVal()
+		hostID = attr.Str()
 	}
 
 	if attr, ok := attrs.Get(conventions.AttributeCloudProvider); ok {
-		provider = attr.StringVal()
+		provider = attr.Str()
 	}
 
 	switch provider {
 	case conventions.AttributeCloudProviderAWS:
 		var region string
 		if attr, ok := attrs.Get(conventions.AttributeCloudRegion); ok {
-			region = attr.StringVal()
+			region = attr.Str()
 		}
 		if hostID == "" || region == "" || cloudAccount == "" {
 			break
@@ -106,7 +95,7 @@ func ResourceToHostID(res pcommon.Resource) (HostID, bool) {
 	if attr, ok := attrs.Get(conventions.AttributeHostName); ok {
 		return HostID{
 			Key: HostIDKeyHost,
-			ID:  attr.StringVal(),
+			ID:  attr.Str(),
 		}, true
 	}
 
@@ -116,15 +105,15 @@ func ResourceToHostID(res pcommon.Resource) (HostID, bool) {
 func azureID(attrs pcommon.Map, cloudAccount string) string {
 	var resourceGroupName string
 	if attr, ok := attrs.Get("azure.resourcegroup.name"); ok {
-		resourceGroupName = attr.StringVal()
+		resourceGroupName = attr.Str()
 	}
 	if resourceGroupName == "" {
 		return ""
 	}
 
 	var hostname string
-	if attr, ok := attrs.Get(conventions.AttributeHostName); ok {
-		hostname = attr.StringVal()
+	if attr, ok := attrs.Get("azure.vm.name"); ok {
+		hostname = attr.Str()
 	}
 	if hostname == "" {
 		return ""
@@ -132,7 +121,7 @@ func azureID(attrs pcommon.Map, cloudAccount string) string {
 
 	var vmScaleSetName string
 	if attr, ok := attrs.Get("azure.vm.scaleset.name"); ok {
-		vmScaleSetName = attr.StringVal()
+		vmScaleSetName = attr.Str()
 	}
 	if vmScaleSetName == "" {
 		return strings.ToLower(fmt.Sprintf(

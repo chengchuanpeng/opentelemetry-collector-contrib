@@ -1,22 +1,12 @@
-// Copyright  The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package mongodbreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/mongodbreceiver"
 
 import (
 	"context"
-	"io/ioutil"
+	"errors"
+	"os"
 	"testing"
 
 	"github.com/hashicorp/go-version"
@@ -39,6 +29,11 @@ func (fc *fakeClient) ListDatabaseNames(ctx context.Context, filters interface{}
 	return args.Get(0).([]string), args.Error(1)
 }
 
+func (fc *fakeClient) ListCollectionNames(ctx context.Context, dbName string) ([]string, error) {
+	args := fc.Called(ctx, dbName)
+	return args.Get(0).([]string), args.Error(1)
+}
+
 func (fc *fakeClient) Disconnect(ctx context.Context) error {
 	args := fc.Called(ctx)
 	return args.Error(0)
@@ -53,14 +48,24 @@ func (fc *fakeClient) GetVersion(ctx context.Context) (*version.Version, error) 
 	return args.Get(0).(*version.Version), args.Error(1)
 }
 
-func (fc *fakeClient) ServerStatus(ctx context.Context, DBName string) (bson.M, error) {
-	args := fc.Called(ctx, DBName)
+func (fc *fakeClient) ServerStatus(ctx context.Context, dbName string) (bson.M, error) {
+	args := fc.Called(ctx, dbName)
 	return args.Get(0).(bson.M), args.Error(1)
 }
 
-func (fc *fakeClient) DBStats(ctx context.Context, DBName string) (bson.M, error) {
-	args := fc.Called(ctx, DBName)
+func (fc *fakeClient) DBStats(ctx context.Context, dbName string) (bson.M, error) {
+	args := fc.Called(ctx, dbName)
 	return args.Get(0).(bson.M), args.Error(1)
+}
+
+func (fc *fakeClient) TopStats(ctx context.Context) (bson.M, error) {
+	args := fc.Called(ctx)
+	return args.Get(0).(bson.M), args.Error(1)
+}
+
+func (fc *fakeClient) IndexStats(ctx context.Context, dbName, collectionName string) ([]bson.M, error) {
+	args := fc.Called(ctx, dbName, collectionName)
+	return args.Get(0).([]bson.M), args.Error(1)
 }
 
 func TestListDatabaseNames(t *testing.T) {
@@ -96,6 +101,7 @@ type commandString = string
 const (
 	dbStatsType      commandString = "dbStats"
 	serverStatusType commandString = "serverStatus"
+	topType          commandString = "top"
 )
 
 func TestRunCommands(t *testing.T) {
@@ -105,6 +111,8 @@ func TestRunCommands(t *testing.T) {
 	loadedDbStats, err := loadDBStats()
 	require.NoError(t, err)
 	loadedServerStatus, err := loadServerStatus()
+	require.NoError(t, err)
+	loadedTop, err := loadTop()
 	require.NoError(t, err)
 
 	testCases := []struct {
@@ -129,6 +137,14 @@ func TestRunCommands(t *testing.T) {
 				require.Equal(t, int32(0), m["mem"].(bson.M)["mapped"])
 			},
 		},
+		{
+			desc:     "top success",
+			cmd:      topType,
+			response: loadedTop,
+			validate: func(t *testing.T, m bson.M) {
+				require.Equal(t, int32(540), m["totals"].(bson.M)["local.oplog.rs"].(bson.M)["commands"].(bson.M)["time"])
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -140,10 +156,13 @@ func TestRunCommands(t *testing.T) {
 				logger: zap.NewNop(),
 			}
 			var result bson.M
-			if tc.cmd == serverStatusType {
+			switch tc.cmd {
+			case serverStatusType:
 				result, err = client.ServerStatus(context.Background(), "test")
-			} else {
+			case dbStatsType:
 				result, err = client.DBStats(context.Background(), "test")
+			case topType:
+				result, err = client.TopStats(context.Background())
 			}
 			require.NoError(t, err)
 			if tc.validate != nil {
@@ -237,6 +256,34 @@ func loadServerStatusAsMap() (bson.M, error) {
 	return loadTestFileAsMap("./testdata/serverStatus.json")
 }
 
+func loadTop() (bson.D, error) {
+	return loadTestFile("./testdata/top.json")
+}
+
+func loadTopAsMap() (bson.M, error) {
+	return loadTestFileAsMap("./testdata/top.json")
+}
+
+func loadIndexStatsAsMap(collectionName string) ([]bson.M, error) {
+	var indexStats []bson.M
+	switch collectionName {
+	case "products":
+		indexStats0, _ := loadTestFileAsMap("./testdata/productsIndexStats0.json")
+		indexStats = append(indexStats, indexStats0)
+	case "orders":
+		indexStats0, _ := loadTestFileAsMap("./testdata/ordersIndexStats0.json")
+		indexStats1, _ := loadTestFileAsMap("./testdata/ordersIndexStats1.json")
+		indexStats2, _ := loadTestFileAsMap("./testdata/ordersIndexStats2.json")
+		indexStats = append(indexStats, indexStats0, indexStats1, indexStats2)
+	case "error":
+		indexStatsError, _ := loadTestFileAsMap("./testdata/indexStatsError.json")
+		indexStats = append(indexStats, indexStatsError)
+	default:
+		return nil, errors.New("failed to load index stats from an unknown collection name")
+	}
+	return indexStats, nil
+}
+
 func loadBuildInfo() (bson.D, error) {
 	return loadTestFile("./testdata/buildInfo.json")
 }
@@ -245,9 +292,13 @@ func loadAdminStatusAsMap() (bson.M, error) {
 	return loadTestFileAsMap("./testdata/admin.json")
 }
 
+func loadOnlyStorageEngineAsMap() (bson.M, error) {
+	return loadTestFileAsMap("./testdata/only_storage_engine.json")
+}
+
 func loadTestFile(filePath string) (bson.D, error) {
 	var doc bson.D
-	testFile, err := ioutil.ReadFile(filePath)
+	testFile, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +311,7 @@ func loadTestFile(filePath string) (bson.D, error) {
 
 func loadTestFileAsMap(filePath string) (bson.M, error) {
 	var doc bson.M
-	testFile, err := ioutil.ReadFile(filePath)
+	testFile, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, err
 	}

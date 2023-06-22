@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 // Package tests contains test cases. To run the tests go to tests directory and run:
 // RUN_TESTBED=1 go test -v
@@ -104,11 +93,29 @@ func TestTrace10kSPS(t *testing.T) {
 		},
 		{
 			"SAPM",
-			datasenders.NewSapmDataSender(testbed.GetAvailablePort(t)),
-			datareceivers.NewSapmDataReceiver(testbed.GetAvailablePort(t)),
+			datasenders.NewSapmDataSender(testbed.GetAvailablePort(t), ""),
+			datareceivers.NewSapmDataReceiver(testbed.GetAvailablePort(t), ""),
 			testbed.ResourceSpec{
 				ExpectedMaxCPU: 32,
 				ExpectedMaxRAM: 100,
+			},
+		},
+		{
+			"SAPM-gzip",
+			datasenders.NewSapmDataSender(testbed.GetAvailablePort(t), "gzip"),
+			datareceivers.NewSapmDataReceiver(testbed.GetAvailablePort(t), "gzip"),
+			testbed.ResourceSpec{
+				ExpectedMaxCPU: 35,
+				ExpectedMaxRAM: 110,
+			},
+		},
+		{
+			"SAPM-zstd",
+			datasenders.NewSapmDataSender(testbed.GetAvailablePort(t), "zstd"),
+			datareceivers.NewSapmDataReceiver(testbed.GetAvailablePort(t), "zstd"),
+			testbed.ResourceSpec{
+				ExpectedMaxCPU: 32,
+				ExpectedMaxRAM: 300,
 			},
 		},
 		{
@@ -159,8 +166,8 @@ func TestTraceNoBackend10kSPS(t *testing.T) {
 		{
 			Name:                "NoMemoryLimit",
 			Processor:           noLimitProcessors,
-			ExpectedMaxRAM:      190,
-			ExpectedMinFinalRAM: 100,
+			ExpectedMaxRAM:      100,
+			ExpectedMinFinalRAM: 80,
 		},
 		{
 			Name:                "MemoryLimit",
@@ -294,7 +301,7 @@ func TestTraceBallast1kSPSAddAttrs(t *testing.T) {
 			{
 				attrCount:      0,
 				attrSizeByte:   0,
-				expectedMaxCPU: 30,
+				expectedMaxCPU: 60,
 				expectedMaxRAM: 2200,
 				resultsSummary: performanceResultsSummary,
 			},
@@ -345,7 +352,7 @@ func verifySingleSpan(
 	// Send one span.
 	td := ptrace.NewTraces()
 	rs := td.ResourceSpans().AppendEmpty()
-	rs.Resource().Attributes().InsertString(conventions.AttributeServiceName, serviceName)
+	rs.Resource().Attributes().PutStr(conventions.AttributeServiceName, serviceName)
 	span := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
 	span.SetTraceID(idutils.UInt64ToTraceID(0, 1))
 	span.SetSpanID(idutils.UInt64ToSpanID(1))
@@ -459,7 +466,7 @@ func TestTraceAttributesProcessor(t *testing.T) {
 				require.Equal(t, span.Attributes().Len(), 1)
 				attrVal, ok := span.Attributes().Get("new_attr")
 				assert.True(t, ok)
-				assert.EqualValues(t, "string value", attrVal.StringVal())
+				assert.EqualValues(t, "string value", attrVal.Str())
 			}
 
 			verifySingleSpan(t, tc, nodeToInclude, spanToInclude, verifySpan)

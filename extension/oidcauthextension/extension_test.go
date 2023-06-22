@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package oidcauthextension
 
@@ -23,7 +12,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"io/ioutil"
 	"math/big"
 	"net"
 	"os"
@@ -72,6 +60,13 @@ func TestOIDCAuthenticationSucceeded(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, ctx)
 
+	// test, upper-case header
+	ctx, err = p.Authenticate(context.Background(), map[string][]string{"Authorization": {fmt.Sprintf("Bearer %s", token)}})
+
+	// verify
+	assert.NoError(t, err)
+	assert.NotNil(t, ctx)
+
 	// TODO(jpkroehling): assert that the authentication routine set the subject/membership to the resource
 }
 
@@ -89,7 +84,7 @@ func TestOIDCProviderForConfigWithTLS(t *testing.T) {
 	x509Cert, err := x509.CreateCertificate(rand.Reader, &cert, &cert, &priv.PublicKey, priv)
 	require.NoError(t, err)
 
-	caFile, err := ioutil.TempFile(os.TempDir(), "cert")
+	caFile, err := os.CreateTemp(os.TempDir(), "cert")
 	require.NoError(t, err)
 	defer os.Remove(caFile.Name())
 
@@ -137,7 +132,7 @@ func TestOIDCLoadIssuerCAFromPath(t *testing.T) {
 	x509Cert, err := x509.CreateCertificate(rand.Reader, &cert, &cert, &priv.PublicKey, priv)
 	require.NoError(t, err)
 
-	file, err := ioutil.TempFile(os.TempDir(), "cert")
+	file, err := os.CreateTemp(os.TempDir(), "cert")
 	require.NoError(t, err)
 	defer os.Remove(file.Name())
 
@@ -157,7 +152,7 @@ func TestOIDCLoadIssuerCAFromPath(t *testing.T) {
 
 func TestOIDCFailedToLoadIssuerCAFromPathEmptyCert(t *testing.T) {
 	// prepare
-	file, err := ioutil.TempFile(os.TempDir(), "cert")
+	file, err := os.CreateTemp(os.TempDir(), "cert")
 	require.NoError(t, err)
 	defer os.Remove(file.Name())
 
@@ -180,7 +175,7 @@ func TestOIDCFailedToLoadIssuerCAFromPathMissingFile(t *testing.T) {
 
 func TestOIDCFailedToLoadIssuerCAFromPathInvalidContent(t *testing.T) {
 	// prepare
-	file, err := ioutil.TempFile(os.TempDir(), "cert")
+	file, err := os.CreateTemp(os.TempDir(), "cert")
 	require.NoError(t, err)
 	defer os.Remove(file.Name())
 	_, err = file.Write([]byte("foobar"))

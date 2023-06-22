@@ -1,22 +1,12 @@
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package subprocessmanager // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/prometheusexecreceiver/subprocessmanager"
 
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -88,7 +78,7 @@ func (proc *SubprocessConfig) Run(ctx context.Context, logger *zap.Logger) (time
 func (proc *SubprocessConfig) pipeSubprocessOutput(reader *bufio.Reader, logger *zap.Logger, isStdout bool) {
 	for {
 		line, err := reader.ReadString('\n')
-		if err != nil && err != io.EOF {
+		if err != nil && !errors.Is(err, io.EOF) {
 			logger.Info("subprocess logging failed", zap.String("error", err.Error()))
 			break
 		}
@@ -103,7 +93,7 @@ func (proc *SubprocessConfig) pipeSubprocessOutput(reader *bufio.Reader, logger 
 		}
 
 		// Leave this function when error is EOF (stderr/stdout pipe was closed)
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 	}

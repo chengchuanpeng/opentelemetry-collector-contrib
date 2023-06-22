@@ -1,21 +1,12 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package processscraper // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/hostmetricsreceiver/internal/scraper/processscraper"
 
 import (
+	"runtime"
 	"strings"
+	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/process"
@@ -29,10 +20,12 @@ import (
 
 type processMetadata struct {
 	pid        int32
+	parentPid  int32
 	executable *executableMetadata
 	command    *commandMetadata
 	username   string
 	handle     processHandle
+	createTime int64
 }
 
 type executableMetadata struct {
@@ -46,10 +39,11 @@ type commandMetadata struct {
 	commandLineSlice []string
 }
 
-func (m *processMetadata) resourceOptions() []metadata.ResourceOption {
-	opts := make([]metadata.ResourceOption, 0, 6)
+func (m *processMetadata) resourceOptions() []metadata.ResourceMetricsOption {
+	opts := make([]metadata.ResourceMetricsOption, 0, 6)
 	opts = append(opts,
 		metadata.WithProcessPid(int64(m.pid)),
+		metadata.WithProcessParentPid(int64(m.parentPid)),
 		metadata.WithProcessExecutableName(m.executable.name),
 		metadata.WithProcessExecutablePath(m.executable.path),
 	)
@@ -85,8 +79,19 @@ type processHandle interface {
 	Cmdline() (string, error)
 	CmdlineSlice() ([]string, error)
 	Times() (*cpu.TimesStat, error)
+	Percent(time.Duration) (float64, error)
 	MemoryInfo() (*process.MemoryInfoStat, error)
+	MemoryPercent() (float32, error)
 	IOCounters() (*process.IOCountersStat, error)
+	NumThreads() (int32, error)
+	CreateTime() (int64, error)
+	Parent() (*process.Process, error)
+	Ppid() (int32, error)
+	PageFaults() (*process.PageFaultsStat, error)
+	NumCtxSwitches() (*process.NumCtxSwitchesStat, error)
+	NumFDs() (int32, error)
+	// If gatherUsed is true, the currently used value will be gathered and added to the resulting RlimitStat.
+	RlimitUsage(gatherUsed bool) ([]process.RlimitStat, error)
 }
 
 type gopsProcessHandles struct {
@@ -112,4 +117,13 @@ func getProcessHandlesInternal() (processHandles, error) {
 	}
 
 	return &gopsProcessHandles{handles: processes}, nil
+}
+
+func parentPid(handle processHandle, pid int32) (int32, error) {
+	// special case for pid 0 and pid 1 in darwin
+	if pid == 0 || (pid == 1 && runtime.GOOS == "darwin") {
+		return 0, nil
+	}
+
+	return handle.Ppid()
 }

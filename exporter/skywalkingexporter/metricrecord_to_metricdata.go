@@ -1,16 +1,5 @@
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package skywalkingexporter // import "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/skywalkingexporter"
 
@@ -77,9 +66,9 @@ func numberMetricsToData(name string, data pmetric.NumberDataPointSlice, default
 		sv.SingleValue.Name = name
 		switch dataPoint.ValueType() {
 		case pmetric.NumberDataPointValueTypeInt:
-			sv.SingleValue.Value = float64(dataPoint.IntVal())
+			sv.SingleValue.Value = float64(dataPoint.IntValue())
 		case pmetric.NumberDataPointValueTypeDouble:
-			sv.SingleValue.Value = dataPoint.DoubleVal()
+			sv.SingleValue.Value = dataPoint.DoubleValue()
 		}
 		meterData.Metric = sv
 		metrics = append(metrics, meterData)
@@ -106,14 +95,16 @@ func doubleHistogramMetricsToData(name string, data pmetric.HistogramDataPointSl
 		hg := &metricpb.MeterData_Histogram{Histogram: &metricpb.MeterHistogram{}}
 		hg.Histogram.Labels = labels
 		hg.Histogram.Name = name
-		bounds := dataPoint.MExplicitBounds()
-		bucketCount := len(dataPoint.MBucketCounts())
+		bounds := dataPoint.ExplicitBounds()
+		bucketCount := dataPoint.BucketCounts().Len()
 
 		if bucketCount > 0 {
-			hg.Histogram.Values = append(hg.Histogram.Values, &metricpb.MeterBucketValue{Count: int64(dataPoint.MBucketCounts()[0]), IsNegativeInfinity: true})
+			hg.Histogram.Values = append(hg.Histogram.Values,
+				&metricpb.MeterBucketValue{Count: int64(dataPoint.BucketCounts().At(0)), IsNegativeInfinity: true})
 		}
-		for i := 1; i < bucketCount && i-1 < len(bounds); i++ {
-			hg.Histogram.Values = append(hg.Histogram.Values, &metricpb.MeterBucketValue{Bucket: bounds[i-1], Count: int64(dataPoint.MBucketCounts()[i])})
+		for i := 1; i < bucketCount && i-1 < bounds.Len(); i++ {
+			hg.Histogram.Values = append(hg.Histogram.Values, &metricpb.MeterBucketValue{Bucket: bounds.At(i - 1),
+				Count: int64(dataPoint.BucketCounts().At(i))})
 		}
 
 		meterData.Metric = hg
@@ -194,16 +185,16 @@ func doubleSummaryMetricsToData(name string, data pmetric.SummaryDataPointSlice,
 }
 
 func metricDataToSwMetricData(md pmetric.Metric, defaultLabels []*metricpb.Label) (metrics []*metricpb.MeterData) {
-	switch md.DataType() {
-	case pmetric.MetricDataTypeNone:
+	switch md.Type() {
+	case pmetric.MetricTypeEmpty:
 		break
-	case pmetric.MetricDataTypeGauge:
+	case pmetric.MetricTypeGauge:
 		return numberMetricsToData(md.Name(), md.Gauge().DataPoints(), defaultLabels)
-	case pmetric.MetricDataTypeSum:
+	case pmetric.MetricTypeSum:
 		return numberMetricsToData(md.Name(), md.Sum().DataPoints(), defaultLabels)
-	case pmetric.MetricDataTypeHistogram:
+	case pmetric.MetricTypeHistogram:
 		return doubleHistogramMetricsToData(md.Name(), md.Histogram().DataPoints(), defaultLabels)
-	case pmetric.MetricDataTypeSummary:
+	case pmetric.MetricTypeSummary:
 		return doubleSummaryMetricsToData(md.Name(), md.Summary().DataPoints(), defaultLabels)
 	}
 	return nil
@@ -219,7 +210,6 @@ func metricsRecordToMetricData(
 		service, serviceInstance := resourceToServiceInfo(resMetricSlice.Resource())
 		insMetricSlice := resMetricSlice.ScopeMetrics()
 		metrics = &metricpb.MeterDataCollection{}
-		metrics.MeterData = make([]*metricpb.MeterData, 0)
 		for j := 0; j < insMetricSlice.Len(); j++ {
 			insMetrics := insMetricSlice.At(j)
 			// ignore insMetrics.Scope()

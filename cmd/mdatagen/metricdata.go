@@ -1,29 +1,19 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package main
 
 import (
+	"errors"
 	"fmt"
 
+	"go.opentelemetry.io/collector/confmap"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 )
 
 var (
 	_ MetricData = &gauge{}
 	_ MetricData = &sum{}
-	_ MetricData = &histogram{}
 )
 
 // MetricData is generic interface for all metric datatypes.
@@ -31,27 +21,33 @@ type MetricData interface {
 	Type() string
 	HasMonotonic() bool
 	HasAggregated() bool
-	HasMetricValueType() bool
 	HasMetricInputType() bool
 }
 
 // Aggregated defines a metric aggregation type.
+// TODO: Rename to AggregationTemporality
 type Aggregated struct {
 	// Aggregation describes if the aggregator reports delta changes
 	// since last report time, or cumulative changes since a fixed start time.
-	Aggregation string `mapstructure:"aggregation" validate:"oneof=delta cumulative"`
+	Aggregation pmetric.AggregationTemporality
 }
 
-// Type gets the metric aggregation type.
-func (agg Aggregated) Type() string {
-	switch agg.Aggregation {
-	case "delta":
-		return "pmetric.MetricAggregationTemporalityDelta"
+// UnmarshalText implements the encoding.TextUnmarshaler interface.
+func (agg *Aggregated) UnmarshalText(text []byte) error {
+	switch vtStr := string(text); vtStr {
 	case "cumulative":
-		return "pmetric.MetricAggregationTemporalityCumulative"
+		agg.Aggregation = pmetric.AggregationTemporalityCumulative
+	case "delta":
+		agg.Aggregation = pmetric.AggregationTemporalityDelta
 	default:
-		return "pmetric.MetricAggregationTemporalityUnknown"
+		return fmt.Errorf("invalid aggregation: %q", vtStr)
 	}
+	return nil
+}
+
+// String returns string representation of the aggregation temporality.
+func (agg *Aggregated) String() string {
+	return agg.Aggregation.String()
 }
 
 // Mono defines the metric monotonicity.
@@ -63,7 +59,18 @@ type Mono struct {
 // MetricInputType defines the metric input value type
 type MetricInputType struct {
 	// InputType is the type the metric needs to be parsed from, options are "string"
-	InputType string `mapstructure:"input_type" validate:"omitempty,oneof=string"`
+	InputType string `mapstructure:"input_type"`
+}
+
+func (mit MetricInputType) Validate() error {
+	if mit.InputType != "" && mit.InputType != "string" {
+		return fmt.Errorf("invalid `input_type` value \"%v\", must be \"\" or \"string\"", mit.InputType)
+	}
+	return nil
+}
+
+func (mit MetricInputType) HasMetricInputType() bool {
+	return mit.InputType != ""
 }
 
 // Type returns name of the datapoint type.
@@ -74,7 +81,14 @@ func (mit MetricInputType) String() string {
 // MetricValueType defines the metric number type.
 type MetricValueType struct {
 	// ValueType is type of the metric number, options are "double", "int".
-	ValueType pmetric.NumberDataPointValueType `validate:"required"`
+	ValueType pmetric.NumberDataPointValueType
+}
+
+func (mvt *MetricValueType) Unmarshal(parser *confmap.Conf) error {
+	if !parser.IsSet("value_type") {
+		return errors.New("missing required field: `value_type`")
+	}
+	return nil
 }
 
 // UnmarshalText implements the encoding.TextUnmarshaler interface.
@@ -112,6 +126,14 @@ type gauge struct {
 	MetricInputType `mapstructure:",squash"`
 }
 
+// Unmarshal is a custom unmarshaler for gauge. Needed mostly to avoid MetricValueType.Unmarshal inheritance.
+func (d *gauge) Unmarshal(parser *confmap.Conf) error {
+	if err := d.MetricValueType.Unmarshal(parser); err != nil {
+		return err
+	}
+	return parser.Unmarshal(d, confmap.WithErrorUnused())
+}
+
 func (d gauge) Type() string {
 	return "Gauge"
 }
@@ -124,19 +146,19 @@ func (d gauge) HasAggregated() bool {
 	return false
 }
 
-func (d gauge) HasMetricValueType() bool {
-	return true
-}
-
-func (d gauge) HasMetricInputType() bool {
-	return d.InputType != ""
-}
-
 type sum struct {
-	Aggregated      `mapstructure:",squash"`
+	Aggregated      `mapstructure:"aggregation"`
 	Mono            `mapstructure:",squash"`
 	MetricValueType `mapstructure:"value_type"`
 	MetricInputType `mapstructure:",squash"`
+}
+
+// Unmarshal is a custom unmarshaler for sum. Needed mostly to avoid MetricValueType.Unmarshal inheritance.
+func (d *sum) Unmarshal(parser *confmap.Conf) error {
+	if err := d.MetricValueType.Unmarshal(parser); err != nil {
+		return err
+	}
+	return parser.Unmarshal(d, confmap.WithErrorUnused())
 }
 
 func (d sum) Type() string {
@@ -149,36 +171,4 @@ func (d sum) HasMonotonic() bool {
 
 func (d sum) HasAggregated() bool {
 	return true
-}
-
-func (d sum) HasMetricValueType() bool {
-	return true
-}
-
-func (d sum) HasMetricInputType() bool {
-	return d.InputType != ""
-}
-
-type histogram struct {
-	Aggregated `mapstructure:",squash"`
-}
-
-func (d histogram) Type() string {
-	return "Histogram"
-}
-
-func (d histogram) HasMonotonic() bool {
-	return false
-}
-
-func (d histogram) HasAggregated() bool {
-	return true
-}
-
-func (d histogram) HasMetricValueType() bool {
-	return false
-}
-
-func (d histogram) HasMetricInputType() bool {
-	return false
 }

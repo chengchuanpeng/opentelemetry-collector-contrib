@@ -1,16 +1,5 @@
-// Copyright 2020 OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package kube // import "github.com/open-telemetry/opentelemetry-collector-contrib/processor/k8sattributesprocessor/internal/kube"
 
@@ -32,14 +21,61 @@ const (
 	ignoreAnnotation string = "opentelemetry.io/k8s-processor/ignore"
 	tagNodeName             = "k8s.node.name"
 	tagStartTime            = "k8s.pod.start_time"
+	tagHostName             = "k8s.pod.hostname"
 	// MetadataFromPod is used to specify to extract metadata/labels/annotations from pod
 	MetadataFromPod = "pod"
 	// MetadataFromNamespace is used to specify to extract metadata/labels/annotations from namespace
-	MetadataFromNamespace = "namespace"
+	MetadataFromNamespace  = "namespace"
+	PodIdentifierMaxLength = 4
+
+	ResourceSource   = "resource_attribute"
+	ConnectionSource = "connection"
+	K8sIPLabelName   = "k8s.pod.ip"
 )
 
-// PodIdentifier is a custom type to represent IP Address or Pod UID
-type PodIdentifier string
+// PodIdentifierAttribute represents AssociationSource with matching value for pod
+type PodIdentifierAttribute struct {
+	Source AssociationSource
+	Value  string
+}
+
+// PodIdentifier is a custom type to represent Pod identification
+type PodIdentifier [PodIdentifierMaxLength]PodIdentifierAttribute
+
+// IsNotEmpty checks if PodIdentifier is empty or not
+func (p *PodIdentifier) IsNotEmpty() bool {
+	return p[0].Source.From != ""
+}
+
+// PodIdentifierAttributeFromSource builds PodIdentifierAttribute using AssociationSource and value
+func PodIdentifierAttributeFromSource(source AssociationSource, value string) PodIdentifierAttribute {
+	return PodIdentifierAttribute{
+		Source: source,
+		Value:  value,
+	}
+}
+
+// PodIdentifierAttributeFromSource builds PodIdentifierAttribute for connection with given value
+func PodIdentifierAttributeFromConnection(value string) PodIdentifierAttribute {
+	return PodIdentifierAttributeFromSource(
+		AssociationSource{
+			From: ConnectionSource,
+			Name: "",
+		},
+		value,
+	)
+}
+
+// PodIdentifierAttributeFromSource builds PodIdentifierAttribute for given resource_attribute name and value
+func PodIdentifierAttributeFromResourceAttribute(key string, value string) PodIdentifierAttribute {
+	return PodIdentifierAttributeFromSource(
+		AssociationSource{
+			From: ResourceSource,
+			Name: key,
+		},
+		value,
+	)
+}
 
 var (
 	// TODO: move these to config with default values
@@ -56,7 +92,7 @@ type Client interface {
 }
 
 // ClientProvider defines a func type that returns a new Client.
-type ClientProvider func(*zap.Logger, k8sconfig.APIConfig, ExtractionRules, Filters, []Association, Excludes, APIClientsetProvider, InformerProvider, InformerProviderNamespace) (Client, error)
+type ClientProvider func(*zap.Logger, k8sconfig.APIConfig, ExtractionRules, Filters, []Association, Excludes, APIClientsetProvider, InformerProvider, InformerProviderNamespace, InformerProviderReplicaSet) (Client, error)
 
 // APIClientsetProvider defines a func type that initializes and return a new kubernetes
 // Clientset object.
@@ -64,22 +100,32 @@ type APIClientsetProvider func(config k8sconfig.APIConfig) (kubernetes.Interface
 
 // Pod represents a kubernetes pod.
 type Pod struct {
-	Name       string
-	Address    string
-	PodUID     string
-	Attributes map[string]string
-	StartTime  *metav1.Time
-	Ignore     bool
-	Namespace  string
+	Name        string
+	Address     string
+	PodUID      string
+	Attributes  map[string]string
+	StartTime   *metav1.Time
+	Ignore      bool
+	Namespace   string
+	HostNetwork bool
 
-	// Containers is a map of container name to Container struct.
-	Containers map[string]*Container
+	// Containers specifies all containers in this pod.
+	Containers PodContainers
 
 	DeletedAt time.Time
 }
 
+// PodContainers specifies a list of pod containers. It is not safe for concurrent use.
+type PodContainers struct {
+	// ByID specifies all containers in a pod by container ID.
+	ByID map[string]*Container
+	// ByName specifies all containers in a pod by container name (k8s.container.name).
+	ByName map[string]*Container
+}
+
 // Container stores resource attributes for a specific container defined by k8s pod spec.
 type Container struct {
+	Name      string
 	ImageName string
 	ImageTag  string
 
@@ -136,18 +182,53 @@ type FieldFilter struct {
 // ExtractionRules is used to specify the information that needs to be extracted
 // from pods and added to the spans as tags.
 type ExtractionRules struct {
-	Deployment         bool
+	CronJobName        bool
+	DeploymentName     bool
+	DeploymentUID      bool
+	DaemonSetUID       bool
+	DaemonSetName      bool
+	JobUID             bool
+	JobName            bool
 	Namespace          bool
 	PodName            bool
 	PodUID             bool
+	PodHostName        bool
+	ReplicaSetID       bool
+	ReplicaSetName     bool
+	StatefulSetUID     bool
+	StatefulSetName    bool
 	Node               bool
 	StartTime          bool
+	ContainerName      bool
 	ContainerID        bool
 	ContainerImageName bool
 	ContainerImageTag  bool
 
 	Annotations []FieldExtractionRule
 	Labels      []FieldExtractionRule
+}
+
+// IncludesOwnerMetadata determines whether the ExtractionRules include metadata about Pod Owners
+func (rules *ExtractionRules) IncludesOwnerMetadata() bool {
+	rulesNeedingOwnerMetadata := []bool{
+		rules.CronJobName,
+		rules.DeploymentName,
+		rules.DeploymentUID,
+		rules.DaemonSetUID,
+		rules.DaemonSetName,
+		rules.JobName,
+		rules.JobUID,
+		rules.ReplicaSetID,
+		rules.ReplicaSetName,
+		rules.StatefulSetUID,
+		rules.StatefulSetName,
+	}
+	for _, ruleEnabled := range rulesNeedingOwnerMetadata {
+		if ruleEnabled {
+			return true
+		}
+	}
+	return false
 }
 
 // FieldExtractionRule is used to specify which fields to extract from pod fields
@@ -157,7 +238,7 @@ type FieldExtractionRule struct {
 	Name string
 	// Key is used to lookup k8s pod fields.
 	Key string
-	// KeyRegex is a regular expression used to extract a Key that matches the regex.
+	// KeyRegex is a regular expression(full length match) used to extract a Key that matches the regex.
 	KeyRegex             *regexp.Regexp
 	HasKeyRegexReference bool
 	// Regex is a regular expression used to extract a sub-part of a field value.
@@ -189,7 +270,7 @@ func (r *FieldExtractionRule) extractFromMetadata(metadata map[string]string, ta
 			if r.KeyRegex.MatchString(k) && v != "" {
 				var name string
 				if r.HasKeyRegexReference {
-					result := []byte{}
+					var result []byte
 					name = string(r.KeyRegex.ExpandString(result, r.Name, k, r.KeyRegex.FindStringSubmatchIndex(k)))
 				} else {
 					name = fmt.Sprintf(formatter, k)
@@ -223,8 +304,8 @@ type Associations struct {
 
 // Association represents one association rule
 type Association struct {
-	From string
-	Name string
+	Name    string
+	Sources []AssociationSource
 }
 
 // Excludes represent a list of Pods to ignore
@@ -235,4 +316,23 @@ type Excludes struct {
 // ExcludePods represent a Pod name to ignore
 type ExcludePods struct {
 	Name *regexp.Regexp
+}
+
+type AssociationSource struct {
+	From string
+	Name string
+}
+
+// Deployment represents a kubernetes deployment.
+type Deployment struct {
+	Name string
+	UID  string
+}
+
+// ReplicaSet represents a kubernetes replicaset.
+type ReplicaSet struct {
+	Name       string
+	Namespace  string
+	UID        string
+	Deployment Deployment
 }

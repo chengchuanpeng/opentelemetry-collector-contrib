@@ -1,16 +1,5 @@
-// Copyright  The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package riakreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/riakreceiver"
 
@@ -22,6 +11,7 @@ import (
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.opentelemetry.io/collector/receiver"
 	"go.opentelemetry.io/collector/receiver/scrapererror"
 	"go.uber.org/zap"
 
@@ -41,17 +31,17 @@ type riakScraper struct {
 }
 
 // newScraper creates a new scraper
-func newScraper(logger *zap.Logger, cfg *Config, settings component.TelemetrySettings) *riakScraper {
+func newScraper(logger *zap.Logger, cfg *Config, settings receiver.CreateSettings) *riakScraper {
 	return &riakScraper{
 		logger:   logger,
 		cfg:      cfg,
-		settings: settings,
-		mb:       metadata.NewMetricsBuilder(cfg.Metrics),
+		settings: settings.TelemetrySettings,
+		mb:       metadata.NewMetricsBuilder(cfg.MetricsBuilderConfig, settings),
 	}
 }
 
 // start starts the scraper by creating a new HTTP Client on the scraper
-func (r *riakScraper) start(ctx context.Context, host component.Host) (err error) {
+func (r *riakScraper) start(_ context.Context, host component.Host) (err error) {
 	r.client, err = newClient(r.cfg, host, r.settings, r.logger)
 	return
 }
@@ -76,25 +66,25 @@ func (r *riakScraper) scrape(ctx context.Context) (pmetric.Metrics, error) {
 func (r *riakScraper) collectStats(stat *model.Stats) (pmetric.Metrics, error) {
 	now := pcommon.NewTimestampFromTime(time.Now())
 	var errors scrapererror.ScrapeErrors
-	//scrape node.operation.count metric
+	// scrape node.operation.count metric
 	r.mb.RecordRiakNodeOperationCountDataPoint(now, stat.NodeGets, metadata.AttributeRequestGet)
 	r.mb.RecordRiakNodeOperationCountDataPoint(now, stat.NodePuts, metadata.AttributeRequestPut)
 
-	//scrape node.operation.time.mean metric
+	// scrape node.operation.time.mean metric
 	r.mb.RecordRiakNodeOperationTimeMeanDataPoint(now, stat.NodeGetFsmTimeMean, metadata.AttributeRequestGet)
 	r.mb.RecordRiakNodeOperationTimeMeanDataPoint(now, stat.NodePutFsmTimeMean, metadata.AttributeRequestPut)
 
-	//scrape node.read_repair.count metric
+	// scrape node.read_repair.count metric
 	r.mb.RecordRiakNodeReadRepairCountDataPoint(now, stat.ReadRepairs)
 
-	//scrape node.memory.limit metric
+	// scrape node.memory.limit metric
 	r.mb.RecordRiakMemoryLimitDataPoint(now, stat.MemAllocated)
 
-	//scrape vnode.operation.count metric
+	// scrape vnode.operation.count metric
 	r.mb.RecordRiakVnodeOperationCountDataPoint(now, stat.VnodeGets, metadata.AttributeRequestGet)
 	r.mb.RecordRiakVnodeOperationCountDataPoint(now, stat.VnodePuts, metadata.AttributeRequestPut)
 
-	//scrape vnode.index.operation.count metric
+	// scrape vnode.index.operation.count metric
 	r.mb.RecordRiakVnodeIndexOperationCountDataPoint(now, stat.VnodeIndexReads, metadata.AttributeOperationRead)
 	r.mb.RecordRiakVnodeIndexOperationCountDataPoint(now, stat.VnodeIndexWrites, metadata.AttributeOperationWrite)
 	r.mb.RecordRiakVnodeIndexOperationCountDataPoint(now, stat.VnodeIndexDeletes, metadata.AttributeOperationDelete)

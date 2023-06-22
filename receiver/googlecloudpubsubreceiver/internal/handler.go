@@ -1,30 +1,20 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package internal // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/googlecloudpubsubreceiver/internal"
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	pubsub "cloud.google.com/go/pubsub/apiv1"
-	"go.uber.org/atomic"
+	"cloud.google.com/go/pubsub/apiv1/pubsubpb"
 	"go.uber.org/zap"
-	pubsubpb "google.golang.org/genproto/googleapis/pubsub/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -74,7 +64,6 @@ func NewHandler(
 		clientID:     clientID,
 		subscription: subscription,
 		pushMessage:  callback,
-		acks:         make([]string, 0),
 		ackBatchWait: 10 * time.Second,
 	}
 	return &handler, handler.initStream(ctx)
@@ -160,7 +149,7 @@ func (handler *StreamHandler) acknowledgeMessages() error {
 	request := pubsubpb.StreamingPullRequest{
 		AckIds: handler.acks,
 	}
-	handler.acks = make([]string, 0)
+	handler.acks = nil
 	return handler.stream.Send(&request)
 }
 
@@ -168,7 +157,7 @@ func (handler *StreamHandler) requestStream(ctx context.Context, cancel context.
 	timer := time.NewTimer(handler.ackBatchWait)
 	for {
 		if err := handler.acknowledgeMessages(); err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				handler.logger.Warn("EOF reached")
 				break
 			}
@@ -181,7 +170,7 @@ func (handler *StreamHandler) requestStream(ctx context.Context, cancel context.
 		case <-timer.C:
 			timer.Reset(handler.ackBatchWait)
 		}
-		if ctx.Err() == context.Canceled {
+		if errors.Is(ctx.Err(), context.Canceled) {
 			_ = handler.acknowledgeMessages()
 			timer.Stop()
 			break
@@ -211,7 +200,7 @@ func (handler *StreamHandler) responseStream(ctx context.Context, cancel context
 		} else {
 			var s, grpcStatus = status.FromError(err)
 			switch {
-			case err == io.EOF:
+			case errors.Is(err, io.EOF):
 				activeStreaming = false
 			case !grpcStatus:
 				handler.logger.Warn("response stream breaking on error",
@@ -231,7 +220,7 @@ func (handler *StreamHandler) responseStream(ctx context.Context, cancel context
 				activeStreaming = false
 			}
 		}
-		if ctx.Err() == context.Canceled {
+		if errors.Is(ctx.Err(), context.Canceled) {
 			// Canceling the loop, collector is probably stopping
 			handler.logger.Warn("response stream ctx.Err() == context.Canceled")
 			break

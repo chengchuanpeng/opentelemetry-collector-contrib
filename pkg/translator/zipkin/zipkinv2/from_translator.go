@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package zipkinv2 // import "github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/zipkin/zipkinv2"
 
@@ -29,6 +18,7 @@ import (
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal/idutils"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal/tracetranslator"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal/traceutil"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/zipkin/internal/zipkin"
 )
 
@@ -80,7 +70,7 @@ func resourceSpansToZipkinSpans(rs ptrace.ResourceSpans, estSpanCount int) ([]*z
 	zSpans := make([]*zipkinmodel.SpanModel, 0, estSpanCount)
 	for i := 0; i < ilss.Len(); i++ {
 		ils := ilss.At(i)
-		extractInstrumentationLibraryTags(ils.Scope(), zTags)
+		extractScopeTags(ils.Scope(), zTags)
 		spans := ils.Spans()
 		for j := 0; j < spans.Len(); j++ {
 			zSpan, err := spanToZipkinSpan(spans.At(j), localServiceName, zTags)
@@ -94,7 +84,7 @@ func resourceSpansToZipkinSpans(rs ptrace.ResourceSpans, estSpanCount int) ([]*z
 	return zSpans, nil
 }
 
-func extractInstrumentationLibraryTags(il pcommon.InstrumentationScope, zTags map[string]string) {
+func extractScopeTags(il pcommon.InstrumentationScope, zTags map[string]string) {
 	if ilName := il.Name(); ilName != "" {
 		zTags[conventions.OtelLibraryName] = ilName
 	}
@@ -122,8 +112,9 @@ func spanToZipkinSpan(
 	}
 	zs.ID = convertSpanID(span.SpanID())
 
-	if len(span.TraceState()) > 0 {
-		tags[tracetranslator.TagW3CTraceState] = string(span.TraceState())
+	traceState := span.TraceState().AsRaw()
+	if traceState != "" {
+		tags[tracetranslator.TagW3CTraceState] = traceState
 	}
 
 	if !span.ParentSpanID().IsEmpty() {
@@ -171,7 +162,7 @@ func spanToZipkinSpan(
 	return zs, nil
 }
 
-func populateStatus(status ptrace.SpanStatus, zs *zipkinmodel.SpanModel, tags map[string]string) {
+func populateStatus(status ptrace.Status, zs *zipkinmodel.SpanModel, tags map[string]string) {
 	if status.Code() == ptrace.StatusCodeError {
 		tags[tracetranslator.TagError] = "true"
 	} else {
@@ -188,7 +179,7 @@ func populateStatus(status ptrace.SpanStatus, zs *zipkinmodel.SpanModel, tags ma
 		return
 	}
 
-	tags[conventions.OtelStatusCode] = status.Code().String()
+	tags[conventions.OtelStatusCode] = traceutil.StatusCodeStr(status.Code())
 	if status.Message() != "" {
 		tags[conventions.OtelStatusDescription] = status.Message()
 		zs.Err = fmt.Errorf("%s", status.Message())
@@ -242,8 +233,8 @@ func spanLinksToZipkinTags(links ptrace.SpanLinkSlice, zTags map[string]string) 
 		if err != nil {
 			return err
 		}
-		zTags[key] = fmt.Sprintf(spanLinkDataFormat, link.TraceID().HexString(),
-			link.SpanID().HexString(), link.TraceState(), jsonStr, link.DroppedAttributesCount())
+		zTags[key] = fmt.Sprintf(spanLinkDataFormat, traceutil.TraceIDToHexOrEmptyString(link.TraceID()),
+			traceutil.SpanIDToHexOrEmptyString(link.SpanID()), link.TraceState().AsRaw(), jsonStr, link.DroppedAttributesCount())
 	}
 	return nil
 }

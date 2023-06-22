@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package jaegerremotesampling
 
@@ -31,7 +20,7 @@ import (
 
 func TestNewExtension(t *testing.T) {
 	// test
-	cfg := createDefaultConfig().(*Config)
+	cfg := testConfig()
 	cfg.Source.File = filepath.Join("testdata", "strategy.json")
 	e := newExtension(cfg, componenttest.NewNopTelemetrySettings())
 
@@ -41,7 +30,7 @@ func TestNewExtension(t *testing.T) {
 
 func TestStartAndShutdownLocalFile(t *testing.T) {
 	// prepare
-	cfg := createDefaultConfig().(*Config)
+	cfg := testConfig()
 	cfg.Source.File = filepath.Join("testdata", "strategy.json")
 
 	e := newExtension(cfg, componenttest.NewNopTelemetrySettings())
@@ -54,7 +43,7 @@ func TestStartAndShutdownLocalFile(t *testing.T) {
 
 func TestStartAndShutdownRemote(t *testing.T) {
 	// prepare the socket the mock server will listen at
-	lis, err := net.Listen("tcp", "localhost:0")
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
 	// create the mock server
@@ -69,9 +58,10 @@ func TestStartAndShutdownRemote(t *testing.T) {
 	}()
 
 	// create the config, pointing to the mock server
-	cfg := createDefaultConfig().(*Config)
+	cfg := testConfig()
+	cfg.GRPCServerSettings.NetAddr.Endpoint = "127.0.0.1:0"
 	cfg.Source.Remote = &configgrpc.GRPCClientSettings{
-		Endpoint:     fmt.Sprintf("localhost:%d", lis.Addr().(*net.TCPAddr).Port),
+		Endpoint:     fmt.Sprintf("127.0.0.1:%d", lis.Addr().(*net.TCPAddr).Port),
 		WaitForReady: true,
 	}
 
@@ -88,8 +78,15 @@ type samplingServer struct {
 	api_v2.UnimplementedSamplingManagerServer
 }
 
-func (s samplingServer) GetSamplingStrategy(ctx context.Context, param *api_v2.SamplingStrategyParameters) (*api_v2.SamplingStrategyResponse, error) {
+func (s samplingServer) GetSamplingStrategy(_ context.Context, _ *api_v2.SamplingStrategyParameters) (*api_v2.SamplingStrategyResponse, error) {
 	return &api_v2.SamplingStrategyResponse{
 		StrategyType: api_v2.SamplingStrategyType_PROBABILISTIC,
 	}, nil
+}
+
+func testConfig() *Config {
+	cfg := createDefaultConfig().(*Config)
+	cfg.HTTPServerSettings.Endpoint = "127.0.0.1:5778"
+	cfg.GRPCServerSettings.NetAddr.Endpoint = "127.0.0.1:14250"
+	return cfg
 }

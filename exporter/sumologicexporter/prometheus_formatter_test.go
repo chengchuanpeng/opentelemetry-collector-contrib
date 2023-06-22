@@ -1,16 +1,5 @@
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package sumologicexporter
 
@@ -18,13 +7,11 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 )
 
 func TestSanitizeKey(t *testing.T) {
-	f, err := newPrometheusFormatter()
-	require.NoError(t, err)
+	f := newPrometheusFormatter()
 
 	key := "&^*123-abc-ABC!?"
 	expected := "___123_abc_ABC__"
@@ -32,8 +19,7 @@ func TestSanitizeKey(t *testing.T) {
 }
 
 func TestSanitizeValue(t *testing.T) {
-	f, err := newPrometheusFormatter()
-	require.NoError(t, err)
+	f := newPrometheusFormatter()
 
 	value := `&^*123-abc-ABC!?"\\n`
 	expected := `&^*123-abc-ABC!?\"\\\n`
@@ -41,8 +27,7 @@ func TestSanitizeValue(t *testing.T) {
 }
 
 func TestTags2StringNoLabels(t *testing.T) {
-	f, err := newPrometheusFormatter()
-	require.NoError(t, err)
+	f := newPrometheusFormatter()
 
 	mp := exampleIntMetric()
 	mp.attributes.Clear()
@@ -50,8 +35,7 @@ func TestTags2StringNoLabels(t *testing.T) {
 }
 
 func TestTags2String(t *testing.T) {
-	f, err := newPrometheusFormatter()
-	require.NoError(t, err)
+	f := newPrometheusFormatter()
 
 	mp := exampleIntMetric()
 	assert.Equal(
@@ -62,17 +46,12 @@ func TestTags2String(t *testing.T) {
 }
 
 func TestTags2StringNoAttributes(t *testing.T) {
-	f, err := newPrometheusFormatter()
-	require.NoError(t, err)
-
-	mp := exampleIntMetric()
-	mp.attributes.Clear()
+	f := newPrometheusFormatter()
 	assert.Equal(t, prometheusTags(""), f.tags2String(pcommon.NewMap(), pcommon.NewMap()))
 }
 
-func TestPrometheusMetricDataTypeIntGauge(t *testing.T) {
-	f, err := newPrometheusFormatter()
-	require.NoError(t, err)
+func TestPrometheusMetricTypeIntGauge(t *testing.T) {
+	f := newPrometheusFormatter()
 	metric := exampleIntGaugeMetric()
 
 	result := f.metric2String(metric)
@@ -86,9 +65,8 @@ gauge_metric_name{foo="bar",remote_name="156955",url="http://another_url"} 245 1
 	assert.Equal(t, expected, result)
 }
 
-func TestPrometheusMetricDataTypeDoubleGauge(t *testing.T) {
-	f, err := newPrometheusFormatter()
-	require.NoError(t, err)
+func TestPrometheusMetricTypeDoubleGauge(t *testing.T) {
+	f := newPrometheusFormatter()
 	metric := exampleDoubleGaugeMetric()
 
 	result := f.metric2String(metric)
@@ -102,9 +80,8 @@ gauge_metric_name_double_test{foo="bar",local_name="156155",endpoint="http://ano
 	assert.Equal(t, expected, result)
 }
 
-func TestPrometheusMetricDataTypeIntSum(t *testing.T) {
-	f, err := newPrometheusFormatter()
-	require.NoError(t, err)
+func TestPrometheusMetricTypeIntSum(t *testing.T) {
+	f := newPrometheusFormatter()
 	metric := exampleIntSumMetric()
 
 	result := f.metric2String(metric)
@@ -118,9 +95,8 @@ sum_metric_int_test{foo="bar",name="156155",address="http://another_url"} 1238 1
 	assert.Equal(t, expected, result)
 }
 
-func TestPrometheusMetricDataTypeDoubleSum(t *testing.T) {
-	f, err := newPrometheusFormatter()
-	require.NoError(t, err)
+func TestPrometheusMetricTypeDoubleSum(t *testing.T) {
+	f := newPrometheusFormatter()
 	metric := exampleDoubleSumMetric()
 
 	result := f.metric2String(metric)
@@ -134,9 +110,8 @@ sum_metric_double_test{foo="bar",pod_name="opsum",namespace="kube-config"} 1238.
 	assert.Equal(t, expected, result)
 }
 
-func TestPrometheusMetricDataTypeSummary(t *testing.T) {
-	f, err := newPrometheusFormatter()
-	require.NoError(t, err)
+func TestPrometheusMetricTypeSummary(t *testing.T) {
+	f := newPrometheusFormatter()
 	metric := exampleSummaryMetric()
 
 	result := f.metric2String(metric)
@@ -154,9 +129,8 @@ summary_metric_double_test_count{foo="bar",pod_name="sit",namespace="main"} 7 16
 	assert.Equal(t, expected, result)
 }
 
-func TestPrometheusMetricDataTypeHistogram(t *testing.T) {
-	f, err := newPrometheusFormatter()
-	require.NoError(t, err)
+func TestPrometheusMetricTypeHistogram(t *testing.T) {
+	f := newPrometheusFormatter()
 	metric := exampleHistogramMetric()
 
 	result := f.metric2String(metric)

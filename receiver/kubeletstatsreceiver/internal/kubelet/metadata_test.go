@@ -1,18 +1,6 @@
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
-// nolint:errcheck
 package kubelet
 
 import (
@@ -20,9 +8,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/pdata/pmetric"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	stats "k8s.io/kubelet/pkg/apis/stats/v1alpha1"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/kubeletstatsreceiver/internal/metadata"
 )
 
 func TestValidateMetadataLabelsConfig(t *testing.T) {
@@ -75,13 +66,13 @@ func TestSetExtraLabels(t *testing.T) {
 		metadata  Metadata
 		args      []string
 		wantError string
-		want      map[string]string
+		want      map[string]interface{}
 	}{
 		{
 			name:     "no_labels",
 			metadata: NewMetadata([]MetadataLabel{}, nil, nil),
 			args:     []string{"uid", "container.id", "container"},
-			want:     map[string]string{},
+			want:     map[string]interface{}{},
 		},
 		{
 			name: "set_container_id_valid",
@@ -98,13 +89,49 @@ func TestSetExtraLabels(t *testing.T) {
 									ContainerID: "test-container",
 								},
 							},
+							InitContainerStatuses: []v1.ContainerStatus{
+								{
+									Name:        "init-container1",
+									ContainerID: "test-init-container",
+								},
+							},
 						},
 					},
 				},
 			}, nil),
 			args: []string{"uid-1234", "container.id", "container1"},
-			want: map[string]string{
+			want: map[string]interface{}{
 				string(MetadataLabelContainerID): "test-container",
+			},
+		},
+		{
+			name: "set_init_container_id_valid",
+			metadata: NewMetadata([]MetadataLabel{MetadataLabelContainerID}, &v1.PodList{
+				Items: []v1.Pod{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							UID: "uid-1234",
+						},
+						Status: v1.PodStatus{
+							ContainerStatuses: []v1.ContainerStatus{
+								{
+									Name:        "container1",
+									ContainerID: "test-container",
+								},
+							},
+							InitContainerStatuses: []v1.ContainerStatus{
+								{
+									Name:        "init-container1",
+									ContainerID: "test-init-container",
+								},
+							},
+						},
+					},
+				},
+			}, nil),
+			args: []string{"uid-1234", "container.id", "init-container1"},
+			want: map[string]interface{}{
+				string(MetadataLabelContainerID): "test-init-container",
 			},
 		},
 		{
@@ -134,6 +161,28 @@ func TestSetExtraLabels(t *testing.T) {
 			}, nil),
 			args:      []string{"uid-1234", "container.id", "container1"},
 			wantError: "pod \"uid-1234\" with container \"container1\" not found in the fetched metadata",
+		},
+		{
+			name: "set_container_id_is_empty",
+			metadata: NewMetadata([]MetadataLabel{MetadataLabelContainerID}, &v1.PodList{
+				Items: []v1.Pod{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							UID: "uid-1234",
+						},
+						Status: v1.PodStatus{
+							ContainerStatuses: []v1.ContainerStatus{
+								{
+									Name:        "container1",
+									ContainerID: "",
+								},
+							},
+						},
+					},
+				},
+			}, nil),
+			args:      []string{"uid-1234", "container.id", "container1"},
+			wantError: "pod \"uid-1234\" with container \"container1\" has an empty containerID",
 		},
 		{
 			name:      "set_volume_type_no_metadata",
@@ -166,11 +215,18 @@ func TestSetExtraLabels(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fields := map[string]string{}
-			err := tt.metadata.setExtraLabels(fields, stats.PodReference{UID: tt.args[0]}, MetadataLabel(tt.args[1]), tt.args[2])
+			ro, err := tt.metadata.getExtraResources(stats.PodReference{UID: tt.args[0]}, MetadataLabel(tt.args[1]), tt.args[2])
+
+			r := pmetric.NewResourceMetrics()
+			rac := metadata.DefaultResourceAttributesConfig()
+			for _, op := range ro {
+				op(rac, r)
+			}
+
 			if tt.wantError == "" {
 				require.NoError(t, err)
-				assert.EqualValues(t, tt.want, fields)
+				temp := r.Resource().Attributes().AsRaw()
+				assert.EqualValues(t, tt.want, temp)
 			} else {
 				assert.Equal(t, tt.wantError, err.Error())
 			}
@@ -184,7 +240,7 @@ func TestSetExtraLabelsForVolumeTypes(t *testing.T) {
 		name string
 		vs   v1.VolumeSource
 		args []string
-		want map[string]string
+		want map[string]interface{}
 	}{
 		{
 			name: "hostPath",
@@ -192,7 +248,7 @@ func TestSetExtraLabelsForVolumeTypes(t *testing.T) {
 				HostPath: &v1.HostPathVolumeSource{},
 			},
 			args: []string{"uid-1234", "k8s.volume.type"},
-			want: map[string]string{
+			want: map[string]interface{}{
 				"k8s.volume.type": "hostPath",
 			},
 		},
@@ -202,7 +258,7 @@ func TestSetExtraLabelsForVolumeTypes(t *testing.T) {
 				ConfigMap: &v1.ConfigMapVolumeSource{},
 			},
 			args: []string{"uid-1234", "k8s.volume.type"},
-			want: map[string]string{
+			want: map[string]interface{}{
 				"k8s.volume.type": "configMap",
 			},
 		},
@@ -212,7 +268,7 @@ func TestSetExtraLabelsForVolumeTypes(t *testing.T) {
 				EmptyDir: &v1.EmptyDirVolumeSource{},
 			},
 			args: []string{"uid-1234", "k8s.volume.type"},
-			want: map[string]string{
+			want: map[string]interface{}{
 				"k8s.volume.type": "emptyDir",
 			},
 		},
@@ -222,7 +278,7 @@ func TestSetExtraLabelsForVolumeTypes(t *testing.T) {
 				Secret: &v1.SecretVolumeSource{},
 			},
 			args: []string{"uid-1234", "k8s.volume.type"},
-			want: map[string]string{
+			want: map[string]interface{}{
 				"k8s.volume.type": "secret",
 			},
 		},
@@ -232,7 +288,7 @@ func TestSetExtraLabelsForVolumeTypes(t *testing.T) {
 				DownwardAPI: &v1.DownwardAPIVolumeSource{},
 			},
 			args: []string{"uid-1234", "k8s.volume.type"},
-			want: map[string]string{
+			want: map[string]interface{}{
 				"k8s.volume.type": "downwardAPI",
 			},
 		},
@@ -244,7 +300,7 @@ func TestSetExtraLabelsForVolumeTypes(t *testing.T) {
 				},
 			},
 			args: []string{"uid-1234", "k8s.volume.type"},
-			want: map[string]string{
+			want: map[string]interface{}{
 				"k8s.volume.type":                "persistentVolumeClaim",
 				"k8s.persistentvolumeclaim.name": "claim-name",
 			},
@@ -259,7 +315,7 @@ func TestSetExtraLabelsForVolumeTypes(t *testing.T) {
 				},
 			},
 			args: []string{"uid-1234", "k8s.volume.type"},
-			want: map[string]string{
+			want: map[string]interface{}{
 				"k8s.volume.type": "awsElasticBlockStore",
 				"aws.volume.id":   "volume_id",
 				"fs.type":         "fs_type",
@@ -276,7 +332,7 @@ func TestSetExtraLabelsForVolumeTypes(t *testing.T) {
 				},
 			},
 			args: []string{"uid-1234", "k8s.volume.type"},
-			want: map[string]string{
+			want: map[string]interface{}{
 				"k8s.volume.type": "gcePersistentDisk",
 				"gce.pd.name":     "pd_name",
 				"fs.type":         "fs_type",
@@ -292,7 +348,7 @@ func TestSetExtraLabelsForVolumeTypes(t *testing.T) {
 				},
 			},
 			args: []string{"uid-1234", "k8s.volume.type"},
-			want: map[string]string{
+			want: map[string]interface{}{
 				"k8s.volume.type":          "glusterfs",
 				"glusterfs.endpoints.name": "endspoints_name",
 				"glusterfs.path":           "path",
@@ -302,13 +358,13 @@ func TestSetExtraLabelsForVolumeTypes(t *testing.T) {
 			name: "unsupported type",
 			vs:   v1.VolumeSource{},
 			args: []string{"uid-1234", "k8s.volume.type"},
-			want: map[string]string{},
+			want: map[string]interface{}{},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fields := map[string]string{}
 			volName := "volume0"
+			rac := metadata.DefaultResourceAttributesConfig()
 			metadata := NewMetadata([]MetadataLabel{MetadataLabelVolumeType}, &v1.PodList{
 				Items: []v1.Pod{
 					{
@@ -325,11 +381,17 @@ func TestSetExtraLabelsForVolumeTypes(t *testing.T) {
 						},
 					},
 				},
-			}, func(volCacheID, volumeClaim, namespace string, labels map[string]string) error {
-				return nil
+			}, func(volCacheID, volumeClaim, namespace string) ([]metadata.ResourceMetricsOption, error) {
+				return nil, nil
 			})
-			metadata.setExtraLabels(fields, stats.PodReference{UID: tt.args[0]}, MetadataLabel(tt.args[1]), volName)
-			assert.Equal(t, tt.want, fields)
+			ro, _ := metadata.getExtraResources(stats.PodReference{UID: tt.args[0]}, MetadataLabel(tt.args[1]), volName)
+
+			rm := pmetric.NewResourceMetrics()
+			for _, op := range ro {
+				op(rac, rm)
+			}
+
+			assert.Equal(t, tt.want, rm.Resource().Attributes().AsRaw())
 		})
 	}
 }

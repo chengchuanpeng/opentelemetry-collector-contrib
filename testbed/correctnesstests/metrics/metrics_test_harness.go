@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package metrics // import "github.com/open-telemetry/opentelemetry-collector-contrib/testbed/correctnesstests/metrics"
 
@@ -22,6 +11,7 @@ import (
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal/metricstestutil"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/testbed/testbed"
 )
 
@@ -40,7 +30,7 @@ type testHarness struct {
 }
 
 type diffConsumer interface {
-	accept(string, []*MetricDiff)
+	accept(string, []*metricstestutil.MetricDiff)
 }
 
 func newTestHarness(
@@ -77,13 +67,13 @@ func (h *testHarness) ConsumeMetrics(_ context.Context, pdm pmetric.Metrics) err
 
 func (h *testHarness) compare(pdm pmetric.Metrics) {
 	pdms := pdm.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics()
-	var diffs []*MetricDiff
+	var diffs []*metricstestutil.MetricDiff
 	for i := 0; i < pdms.Len(); i++ {
 		pdmRecd := pdms.At(i)
 		metricName := pdmRecd.Name()
 		metric, found := h.metricIndex.lookup(metricName)
 		if !found {
-			h.diffConsumer.accept(metricName, []*MetricDiff{{
+			h.diffConsumer.accept(metricName, []*metricstestutil.MetricDiff{{
 				ExpectedValue: metricName,
 				Msg:           "Metric name not found in index",
 			}})
@@ -92,7 +82,7 @@ func (h *testHarness) compare(pdm pmetric.Metrics) {
 			metric.received = true
 			sent := metric.pdm
 			pdmExpected := sent.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0)
-			diffs = DiffMetric(
+			diffs = metricstestutil.DiffMetric(
 				diffs,
 				pdmExpected,
 				pdmRecd,

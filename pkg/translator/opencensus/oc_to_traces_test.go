@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package opencensus
 
@@ -92,12 +81,7 @@ func TestInitAttributeMapFromOC(t *testing.T) {
 	}
 	attrs = pcommon.NewMap()
 	initAttributeMapFromOC(ocAttrs, attrs)
-	assert.EqualValues(t,
-		pcommon.NewMapFromRaw(
-			map[string]interface{}{
-				"abc": "def",
-			}),
-		attrs)
+	assert.Equal(t, map[string]interface{}{"abc": "def"}, attrs.AsRaw())
 	assert.EqualValues(t, 234, ocAttrsToDroppedAttributes(ocAttrs))
 
 	ocAttrs.AttributeMap["intval"] = &octrace.AttributeValue{
@@ -112,13 +96,12 @@ func TestInitAttributeMapFromOC(t *testing.T) {
 	attrs = pcommon.NewMap()
 	initAttributeMapFromOC(ocAttrs, attrs)
 
-	expectedAttr := pcommon.NewMapFromRaw(map[string]interface{}{
+	assert.EqualValues(t, map[string]interface{}{
 		"abc":       "def",
-		"intval":    345,
+		"intval":    int64(345),
 		"boolval":   true,
 		"doubleval": 4.5,
-	})
-	assert.EqualValues(t, expectedAttr.Sort(), attrs.Sort())
+	}, attrs.AsRaw())
 	assert.EqualValues(t, 234, ocAttrsToDroppedAttributes(ocAttrs))
 }
 
@@ -400,14 +383,14 @@ func TestOcSameProcessAsParentSpanToInternal(t *testing.T) {
 	v, ok := span.Attributes().Get(occonventions.AttributeSameProcessAsParentSpan)
 	assert.True(t, ok)
 	assert.EqualValues(t, pcommon.ValueTypeBool, v.Type())
-	assert.False(t, v.BoolVal())
+	assert.False(t, v.Bool())
 
 	ocSameProcessAsParentSpanToInternal(wrapperspb.Bool(true), span)
 	assert.Equal(t, 1, span.Attributes().Len())
 	v, ok = span.Attributes().Get(occonventions.AttributeSameProcessAsParentSpan)
 	assert.True(t, ok)
 	assert.EqualValues(t, pcommon.ValueTypeBool, v.Type())
-	assert.True(t, v.BoolVal())
+	assert.True(t, v.Bool())
 }
 
 func BenchmarkSpansWithAttributesOCToInternal(b *testing.B) {

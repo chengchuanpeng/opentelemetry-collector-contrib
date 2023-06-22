@@ -1,18 +1,6 @@
-// Copyright 2020 OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
-// nolint:errcheck
 package kube
 
 import (
@@ -124,11 +112,12 @@ func Test_fakeInformer(t *testing.T) {
 	c, err := newFakeAPIClientset(k8sconfig.APIConfig{})
 	assert.NoError(t, err)
 	i := NewFakeInformer(c, "ns", nil, nil)
-	i.AddEventHandlerWithResyncPeriod(cache.ResourceEventHandlerFuncs{}, time.Second)
+	_, err = i.AddEventHandlerWithResyncPeriod(cache.ResourceEventHandlerFuncs{}, time.Second)
+	assert.NoError(t, err)
 	i.HasSynced()
 	i.LastSyncResourceVersion()
 	store := i.GetStore()
-	store.Add(api_v1.Pod{})
+	assert.NoError(t, store.Add(api_v1.Pod{}))
 }
 
 func Test_fakeNamespaceInformer(t *testing.T) {
@@ -136,9 +125,10 @@ func Test_fakeNamespaceInformer(t *testing.T) {
 	c, err := newFakeAPIClientset(k8sconfig.APIConfig{})
 	assert.NoError(t, err)
 	i := NewFakeNamespaceInformer(c)
-	i.AddEventHandlerWithResyncPeriod(cache.ResourceEventHandlerFuncs{}, time.Second)
+	_, err = i.AddEventHandlerWithResyncPeriod(cache.ResourceEventHandlerFuncs{}, time.Second)
+	assert.NoError(t, err)
 	i.HasSynced()
 	i.LastSyncResourceVersion()
 	store := i.GetStore()
-	store.Add(api_v1.Namespace{})
+	assert.NoError(t, store.Add(api_v1.Namespace{}))
 }

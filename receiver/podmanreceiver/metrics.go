@@ -1,16 +1,5 @@
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 //go:build !windows
 // +build !windows
@@ -32,19 +21,25 @@ type point struct {
 	attributes map[string]string
 }
 
-func translateStatsToMetrics(stats *containerStats, ts time.Time, rm pmetric.ResourceMetrics) {
+func containerStatsToMetrics(ts time.Time, container container, stats *containerStats) pmetric.Metrics {
 	pbts := pcommon.NewTimestampFromTime(ts)
 
-	resource := rm.Resource()
-	resource.Attributes().InsertString(conventions.AttributeContainerRuntime, "podman")
-	resource.Attributes().InsertString(conventions.AttributeContainerName, stats.Name)
-	resource.Attributes().InsertString(conventions.AttributeContainerID, stats.ContainerID)
+	md := pmetric.NewMetrics()
+	rs := md.ResourceMetrics().AppendEmpty()
 
-	ms := rm.ScopeMetrics().AppendEmpty().Metrics()
+	resourceAttr := rs.Resource().Attributes()
+	resourceAttr.PutStr(conventions.AttributeContainerRuntime, "podman")
+	resourceAttr.PutStr(conventions.AttributeContainerName, stats.Name)
+	resourceAttr.PutStr(conventions.AttributeContainerID, stats.ContainerID)
+	resourceAttr.PutStr(conventions.AttributeContainerImageName, container.Image)
+
+	ms := rs.ScopeMetrics().AppendEmpty().Metrics()
 	appendIOMetrics(ms, stats, pbts)
 	appendCPUMetrics(ms, stats, pbts)
 	appendNetworkMetrics(ms, stats, pbts)
 	appendMemoryMetrics(ms, stats, pbts)
+
+	return md
 }
 
 func appendMemoryMetrics(ms pmetric.MetricSlice, stats *containerStats, ts pcommon.Timestamp) {
@@ -89,27 +84,23 @@ func initMetric(ms pmetric.MetricSlice, name, unit string) pmetric.Metric {
 
 func sum(ilm pmetric.MetricSlice, metricName string, unit string, points []point, ts pcommon.Timestamp) {
 	metric := initMetric(ilm, metricName, unit)
-
-	metric.SetDataType(pmetric.MetricDataTypeSum)
-	sum := metric.Sum()
+	sum := metric.SetEmptySum()
 	sum.SetIsMonotonic(true)
-	sum.SetAggregationTemporality(pmetric.MetricAggregationTemporalityCumulative)
+	sum.SetAggregationTemporality(pmetric.AggregationTemporalityCumulative)
 
 	dataPoints := sum.DataPoints()
 
 	for _, pt := range points {
 		dataPoint := dataPoints.AppendEmpty()
 		dataPoint.SetTimestamp(ts)
-		dataPoint.SetIntVal(int64(pt.intVal))
+		dataPoint.SetIntValue(int64(pt.intVal))
 		setDataPointAttributes(dataPoint, pt.attributes)
 	}
 }
 
 func gauge(ms pmetric.MetricSlice, metricName string, unit string) pmetric.NumberDataPointSlice {
 	metric := initMetric(ms, metricName, unit)
-	metric.SetDataType(pmetric.MetricDataTypeGauge)
-
-	gauge := metric.Gauge()
+	gauge := metric.SetEmptyGauge()
 	return gauge.DataPoints()
 }
 
@@ -118,7 +109,7 @@ func gaugeI(ms pmetric.MetricSlice, metricName string, unit string, points []poi
 	for _, pt := range points {
 		dataPoint := dataPoints.AppendEmpty()
 		dataPoint.SetTimestamp(ts)
-		dataPoint.SetIntVal(int64(pt.intVal))
+		dataPoint.SetIntValue(int64(pt.intVal))
 		setDataPointAttributes(dataPoint, pt.attributes)
 	}
 }
@@ -128,13 +119,13 @@ func gaugeF(ms pmetric.MetricSlice, metricName string, unit string, points []poi
 	for _, pt := range points {
 		dataPoint := dataPoints.AppendEmpty()
 		dataPoint.SetTimestamp(ts)
-		dataPoint.SetDoubleVal(pt.doubleVal)
+		dataPoint.SetDoubleValue(pt.doubleVal)
 		setDataPointAttributes(dataPoint, pt.attributes)
 	}
 }
 
 func setDataPointAttributes(dataPoint pmetric.NumberDataPoint, attributes map[string]string) {
 	for k, v := range attributes {
-		dataPoint.Attributes().InsertString(k, v)
+		dataPoint.Attributes().PutStr(k, v)
 	}
 }

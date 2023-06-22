@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package goldendataset // import "github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal/goldendataset"
 
@@ -54,9 +43,10 @@ func GenerateTraces(tracePairsFile string, spanPairsFile string) ([]ptrace.Trace
 }
 
 // generateResourceSpan generates a single PData ResourceSpans populated based on the provided inputs. They are:
-//   tracingInputs - the pairwise combination of field value variations for this ResourceSpans
-//   spanPairsFile - the file with the PICT-generated parameter combinations to generate spans for
-//   random - the random number generator to use in generating ID values
+//
+//	tracingInputs - the pairwise combination of field value variations for this ResourceSpans
+//	spanPairsFile - the file with the PICT-generated parameter combinations to generate spans for
+//	random - the random number generator to use in generating ID values
 //
 // The generated resource spans. If err is not nil, some or all of the resource spans fields will be nil.
 func appendResourceSpan(tracingInputs *PICTTracingInputs, spanPairsFile string,
@@ -119,7 +109,7 @@ func countTotalSpanCases(spanPairsFile string) (int, error) {
 	return count, err
 }
 
-func fillInstrumentationLibrary(tracingInputs *PICTTracingInputs, index int, instrumentationLibrary pcommon.InstrumentationScope) {
+func fillInstrumentationLibrary(tracingInputs *PICTTracingInputs, index int, scope pcommon.InstrumentationScope) {
 	if tracingInputs.InstrumentationLibrary == LibraryNone {
 		return
 	}
@@ -128,6 +118,6 @@ func fillInstrumentationLibrary(tracingInputs *PICTTracingInputs, index int, ins
 	if index > 0 {
 		verStr = ""
 	}
-	instrumentationLibrary.SetName(nameStr)
-	instrumentationLibrary.SetVersion(verStr)
+	scope.SetName(nameStr)
+	scope.SetVersion(verStr)
 }

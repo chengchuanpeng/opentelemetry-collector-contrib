@@ -1,20 +1,13 @@
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package redisreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/redisreceiver"
 
-import "go.opentelemetry.io/collector/pdata/pcommon"
+import (
+	"go.opentelemetry.io/collector/pdata/pcommon"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/redisreceiver/internal/metadata"
+)
 
 // dataPointRecorders is called once at startup. Returns recorders for all metrics (except keyspace)
 // we want to extract from Redis INFO.
@@ -32,6 +25,7 @@ func (rs *redisScraper) dataPointRecorders() map[string]interface{} {
 		"keyspace_misses":                 rs.mb.RecordRedisKeyspaceMissesDataPoint,
 		"latest_fork_usec":                rs.mb.RecordRedisLatestForkDataPoint,
 		"master_repl_offset":              rs.mb.RecordRedisReplicationOffsetDataPoint,
+		"maxmemory":                       rs.mb.RecordRedisMaxmemoryDataPoint,
 		"mem_fragmentation_ratio":         rs.mb.RecordRedisMemoryFragmentationRatioDataPoint,
 		"rdb_changes_since_last_save":     rs.mb.RecordRedisRdbChangesSinceLastSaveDataPoint,
 		"rejected_connections":            rs.mb.RecordRedisConnectionsRejectedDataPoint,
@@ -43,7 +37,10 @@ func (rs *redisScraper) dataPointRecorders() map[string]interface{} {
 		"uptime_in_seconds":               rs.mb.RecordRedisUptimeDataPoint,
 		"used_cpu_sys":                    rs.recordUsedCPUSys,
 		"used_cpu_sys_children":           rs.recordUsedCPUSysChildren,
-		"used_cpu_user":                   rs.recordUsedCPUSysUser,
+		"used_cpu_sys_main_thread":        rs.recordUsedCPUSysMainThread,
+		"used_cpu_user":                   rs.recordUsedCPUUser,
+		"used_cpu_user_children":          rs.recordUsedCPUUserChildren,
+		"used_cpu_user_main_thread":       rs.recordUsedCPUUserMainThread,
 		"used_memory":                     rs.mb.RecordRedisMemoryUsedDataPoint,
 		"used_memory_lua":                 rs.mb.RecordRedisMemoryLuaDataPoint,
 		"used_memory_peak":                rs.mb.RecordRedisMemoryPeakDataPoint,
@@ -52,13 +49,25 @@ func (rs *redisScraper) dataPointRecorders() map[string]interface{} {
 }
 
 func (rs *redisScraper) recordUsedCPUSys(now pcommon.Timestamp, val float64) {
-	rs.mb.RecordRedisCPUTimeDataPoint(now, val, "sys")
+	rs.mb.RecordRedisCPUTimeDataPoint(now, val, metadata.AttributeStateSys)
 }
 
 func (rs *redisScraper) recordUsedCPUSysChildren(now pcommon.Timestamp, val float64) {
-	rs.mb.RecordRedisCPUTimeDataPoint(now, val, "children")
+	rs.mb.RecordRedisCPUTimeDataPoint(now, val, metadata.AttributeStateSysChildren)
 }
 
-func (rs *redisScraper) recordUsedCPUSysUser(now pcommon.Timestamp, val float64) {
-	rs.mb.RecordRedisCPUTimeDataPoint(now, val, "user")
+func (rs *redisScraper) recordUsedCPUSysMainThread(now pcommon.Timestamp, val float64) {
+	rs.mb.RecordRedisCPUTimeDataPoint(now, val, metadata.AttributeStateSysMainThread)
+}
+
+func (rs *redisScraper) recordUsedCPUUser(now pcommon.Timestamp, val float64) {
+	rs.mb.RecordRedisCPUTimeDataPoint(now, val, metadata.AttributeStateUser)
+}
+
+func (rs *redisScraper) recordUsedCPUUserChildren(now pcommon.Timestamp, val float64) {
+	rs.mb.RecordRedisCPUTimeDataPoint(now, val, metadata.AttributeStateUserChildren)
+}
+
+func (rs *redisScraper) recordUsedCPUUserMainThread(now pcommon.Timestamp, val float64) {
+	rs.mb.RecordRedisCPUTimeDataPoint(now, val, metadata.AttributeStateUserMainThread)
 }

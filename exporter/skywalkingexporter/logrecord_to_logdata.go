@@ -1,20 +1,10 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package skywalkingexporter // import "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/skywalkingexporter"
 
 import (
+	"encoding/hex"
 	"strconv"
 	"time"
 
@@ -36,7 +26,7 @@ const (
 )
 
 func logRecordToLogData(ld plog.Logs) []*logpb.LogData {
-	lds := make([]*logpb.LogData, 0)
+	var lds []*logpb.LogData
 	rls := ld.ResourceLogs()
 	for i := 0; i < rls.Len(); i++ {
 		rl := rls.At(i)
@@ -80,14 +70,14 @@ func resourceToLogData(resource pcommon.Resource, logData *logpb.LogData) {
 	})
 }
 
-func instrumentationLibraryToLogData(instrumentationLibrary pcommon.InstrumentationScope, logData *logpb.LogData) {
-	if nameValue := instrumentationLibrary.Name(); nameValue != "" {
+func instrumentationLibraryToLogData(scope pcommon.InstrumentationScope, logData *logpb.LogData) {
+	if nameValue := scope.Name(); nameValue != "" {
 		logData.Tags.Data = append(logData.Tags.Data, &common.KeyStringValuePair{
 			Key:   instrumentationName,
 			Value: nameValue,
 		})
 	}
-	if version := instrumentationLibrary.Version(); version != "" {
+	if version := scope.Version(); version != "" {
 		logData.Tags.Data = append(logData.Tags.Data, &common.KeyStringValuePair{
 			Key:   instrumentationVersion,
 			Value: version,
@@ -141,14 +131,14 @@ func mapLogRecordToLogData(lr plog.LogRecord, logData *logpb.LogData) {
 		})
 	}
 
-	if traceID := lr.TraceID().HexString(); traceID != "" {
-		logData.TraceContext = &logpb.TraceContext{TraceId: traceID}
+	if traceID := lr.TraceID(); !traceID.IsEmpty() {
+		logData.TraceContext = &logpb.TraceContext{TraceId: hex.EncodeToString(traceID[:])}
 	}
 
-	if spanID := lr.SpanID().HexString(); spanID != "" {
+	if spanID := lr.SpanID(); !spanID.IsEmpty() {
 		logData.Tags.Data = append(logData.Tags.Data, &common.KeyStringValuePair{
 			Key:   spanIDField,
-			Value: spanID,
+			Value: hex.EncodeToString(spanID[:]),
 		})
 	}
 }

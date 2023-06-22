@@ -1,16 +1,5 @@
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package kubeletstatsreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/kubeletstatsreceiver"
 
@@ -19,9 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.opentelemetry.io/collector/receiver"
 	"go.opentelemetry.io/collector/receiver/scraperhelper"
 	"go.uber.org/zap"
 	v1 "k8s.io/api/core/v1"
@@ -29,10 +17,10 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/kubeletstatsreceiver/internal/kubelet"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/kubeletstatsreceiver/internal/metadata"
 )
 
 type scraperOptions struct {
-	id                    config.ComponentID
 	collectionInterval    time.Duration
 	extraMetadataLabels   []kubelet.MetadataLabel
 	metricGroupsToCollect map[kubelet.MetricGroup]bool
@@ -46,13 +34,15 @@ type kubletScraper struct {
 	extraMetadataLabels   []kubelet.MetadataLabel
 	metricGroupsToCollect map[kubelet.MetricGroup]bool
 	k8sAPIClient          kubernetes.Interface
-	cachedVolumeLabels    map[string]map[string]string
+	cachedVolumeLabels    map[string][]metadata.ResourceMetricsOption
+	mbs                   *metadata.MetricsBuilders
 }
 
 func newKubletScraper(
 	restClient kubelet.RestClient,
-	set component.ReceiverCreateSettings,
+	set receiver.CreateSettings,
 	rOptions *scraperOptions,
+	metricsConfig metadata.MetricsBuilderConfig,
 ) (scraperhelper.Scraper, error) {
 	ks := &kubletScraper{
 		statsProvider:         kubelet.NewStatsProvider(restClient),
@@ -61,9 +51,15 @@ func newKubletScraper(
 		extraMetadataLabels:   rOptions.extraMetadataLabels,
 		metricGroupsToCollect: rOptions.metricGroupsToCollect,
 		k8sAPIClient:          rOptions.k8sAPIClient,
-		cachedVolumeLabels:    make(map[string]map[string]string),
+		cachedVolumeLabels:    make(map[string][]metadata.ResourceMetricsOption),
+		mbs: &metadata.MetricsBuilders{
+			NodeMetricsBuilder:      metadata.NewMetricsBuilder(metricsConfig, set),
+			PodMetricsBuilder:       metadata.NewMetricsBuilder(metricsConfig, set),
+			ContainerMetricsBuilder: metadata.NewMetricsBuilder(metricsConfig, set),
+			OtherMetricsBuilder:     metadata.NewMetricsBuilder(metricsConfig, set),
+		},
 	}
-	return scraperhelper.NewScraper(typeStr, ks.scrape)
+	return scraperhelper.NewScraper(metadata.Type, ks.scrape)
 }
 
 func (r *kubletScraper) scrape(context.Context) (pmetric.Metrics, error) {
@@ -84,7 +80,7 @@ func (r *kubletScraper) scrape(context.Context) (pmetric.Metrics, error) {
 	}
 
 	metadata := kubelet.NewMetadata(r.extraMetadataLabels, podsMetadata, r.detailedPVCLabelsSetter())
-	mds := kubelet.MetricsData(r.logger, summary, metadata, r.metricGroupsToCollect)
+	mds := kubelet.MetricsData(r.logger, summary, metadata, r.metricGroupsToCollect, r.mbs)
 	md := pmetric.NewMetrics()
 	for i := range mds {
 		mds[i].ResourceMetrics().MoveAndAppendTo(md.ResourceMetrics())
@@ -92,39 +88,34 @@ func (r *kubletScraper) scrape(context.Context) (pmetric.Metrics, error) {
 	return md, nil
 }
 
-func (r *kubletScraper) detailedPVCLabelsSetter() func(volCacheID, volumeClaim, namespace string, labels map[string]string) error {
-	return func(volCacheID, volumeClaim, namespace string, labels map[string]string) error {
+func (r *kubletScraper) detailedPVCLabelsSetter() func(volCacheID, volumeClaim, namespace string) ([]metadata.ResourceMetricsOption, error) {
+	return func(volCacheID, volumeClaim, namespace string) ([]metadata.ResourceMetricsOption, error) {
 		if r.k8sAPIClient == nil {
-			return nil
+			return nil, nil
 		}
 
 		if r.cachedVolumeLabels[volCacheID] == nil {
 			ctx := context.Background()
 			pvc, err := r.k8sAPIClient.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, volumeClaim, metav1.GetOptions{})
 			if err != nil {
-				return err
+				return nil, err
 			}
 
 			volName := pvc.Spec.VolumeName
 			if volName == "" {
-				return fmt.Errorf("PersistentVolumeClaim %s does not have a volume name", pvc.Name)
+				return nil, fmt.Errorf("PersistentVolumeClaim %s does not have a volume name", pvc.Name)
 			}
 
 			pv, err := r.k8sAPIClient.CoreV1().PersistentVolumes().Get(ctx, volName, metav1.GetOptions{})
 			if err != nil {
-				return err
+				return nil, err
 			}
 
-			labelsToCache := make(map[string]string)
-			kubelet.GetPersistentVolumeLabels(pv.Spec.PersistentVolumeSource, labelsToCache)
+			ro := kubelet.GetPersistentVolumeLabels(pv.Spec.PersistentVolumeSource)
 
 			// Cache collected labels.
-			r.cachedVolumeLabels[volCacheID] = labelsToCache
+			r.cachedVolumeLabels[volCacheID] = ro
 		}
-
-		for k, v := range r.cachedVolumeLabels[volCacheID] {
-			labels[k] = v
-		}
-		return nil
+		return r.cachedVolumeLabels[volCacheID], nil
 	}
 }

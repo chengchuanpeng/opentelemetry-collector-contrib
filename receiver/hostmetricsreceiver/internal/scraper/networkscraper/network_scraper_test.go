@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package networkscraper
 
@@ -25,9 +14,10 @@ import (
 	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.opentelemetry.io/collector/receiver/receivertest"
 	"go.opentelemetry.io/collector/receiver/scrapererror"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal/processor/filterset"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/filter/filterset"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/hostmetricsreceiver/internal"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/hostmetricsreceiver/internal/scraper/networkscraper/internal/metadata"
 )
@@ -39,26 +29,35 @@ func TestScrape(t *testing.T) {
 		bootTimeFunc         func() (uint64, error)
 		ioCountersFunc       func(bool) ([]net.IOCountersStat, error)
 		connectionsFunc      func(string) ([]net.ConnectionStat, error)
+		conntrackFunc        func() ([]net.FilterStat, error)
 		expectNetworkMetrics bool
 		expectedStartTime    pcommon.Timestamp
 		newErrRegex          string
 		initializationErr    string
 		expectedErr          string
 		expectedErrCount     int
+		mutateScraper        func(*scraper)
 	}
 
 	testCases := []testCase{
 		{
 			name: "Standard",
 			config: Config{
-				Metrics: metadata.DefaultMetricsSettings(),
+				MetricsBuilderConfig: metadata.DefaultMetricsBuilderConfig(),
+			},
+			expectNetworkMetrics: true,
+		},
+		{
+			name: "Standard with direction removed",
+			config: Config{
+				MetricsBuilderConfig: metadata.DefaultMetricsBuilderConfig(),
 			},
 			expectNetworkMetrics: true,
 		},
 		{
 			name: "Validate Start Time",
 			config: Config{
-				Metrics: metadata.DefaultMetricsSettings(),
+				MetricsBuilderConfig: metadata.DefaultMetricsBuilderConfig(),
 			},
 			bootTimeFunc:         func() (uint64, error) { return 100, nil },
 			expectNetworkMetrics: true,
@@ -67,24 +66,24 @@ func TestScrape(t *testing.T) {
 		{
 			name: "Include Filter that matches nothing",
 			config: Config{
-				Metrics: metadata.DefaultMetricsSettings(),
-				Include: MatchConfig{filterset.Config{MatchType: "strict"}, []string{"@*^#&*$^#)"}},
+				MetricsBuilderConfig: metadata.DefaultMetricsBuilderConfig(),
+				Include:              MatchConfig{filterset.Config{MatchType: "strict"}, []string{"@*^#&*$^#)"}},
 			},
 			expectNetworkMetrics: false,
 		},
 		{
 			name: "Invalid Include Filter",
 			config: Config{
-				Metrics: metadata.DefaultMetricsSettings(),
-				Include: MatchConfig{Interfaces: []string{"test"}},
+				MetricsBuilderConfig: metadata.DefaultMetricsBuilderConfig(),
+				Include:              MatchConfig{Interfaces: []string{"test"}},
 			},
 			newErrRegex: "^error creating network interface include filters:",
 		},
 		{
 			name: "Invalid Exclude Filter",
 			config: Config{
-				Metrics: metadata.DefaultMetricsSettings(),
-				Exclude: MatchConfig{Interfaces: []string{"test"}},
+				MetricsBuilderConfig: metadata.DefaultMetricsBuilderConfig(),
+				Exclude:              MatchConfig{Interfaces: []string{"test"}},
 			},
 			newErrRegex: "^error creating network interface exclude filters:",
 		},
@@ -105,11 +104,22 @@ func TestScrape(t *testing.T) {
 			expectedErr:      "failed to read TCP connections: err3",
 			expectedErrCount: connectionsMetricsLen,
 		},
+		{
+			name: "Conntrack error ignored if metric disabled",
+			config: Config{
+				MetricsBuilderConfig: metadata.DefaultMetricsBuilderConfig(), // conntrack metrics are disabled by default
+			},
+			conntrackFunc:        func() ([]net.FilterStat, error) { return nil, errors.New("conntrack failed") },
+			expectNetworkMetrics: true,
+		},
 	}
 
 	for _, test := range testCases {
 		t.Run(test.name, func(t *testing.T) {
-			scraper, err := newNetworkScraper(context.Background(), &test.config)
+			scraper, err := newNetworkScraper(context.Background(), receivertest.NewNopCreateSettings(), &test.config)
+			if test.mutateScraper != nil {
+				test.mutateScraper(scraper)
+			}
 			if test.newErrRegex != "" {
 				require.Error(t, err)
 				require.Regexp(t, test.newErrRegex, err)
@@ -126,6 +136,9 @@ func TestScrape(t *testing.T) {
 			if test.connectionsFunc != nil {
 				scraper.connections = test.connectionsFunc
 			}
+			if test.conntrackFunc != nil {
+				scraper.conntrack = test.conntrackFunc
+			}
 
 			err = scraper.start(context.Background(), componenttest.NewNopHost())
 			if test.initializationErr != "" {
@@ -141,7 +154,9 @@ func TestScrape(t *testing.T) {
 				isPartial := scrapererror.IsPartialScrapeError(err)
 				assert.True(t, isPartial)
 				if isPartial {
-					assert.Equal(t, test.expectedErrCount, err.(scrapererror.PartialScrapeError).Failed)
+					var scraperErr scrapererror.PartialScrapeError
+					require.ErrorAs(t, err, &scraperErr)
+					assert.Equal(t, test.expectedErrCount, scraperErr.Failed)
 				}
 
 				return
@@ -158,10 +173,12 @@ func TestScrape(t *testing.T) {
 			idx := 0
 			assertNetworkConnectionsMetricValid(t, metrics.At(idx))
 			if test.expectNetworkMetrics {
-				assertNetworkIOMetricValid(t, metrics.At(idx+1), "system.network.dropped", test.expectedStartTime)
+				assertNetworkIOMetricValid(t, metrics.At(idx+1), "system.network.dropped",
+					test.expectedStartTime)
 				assertNetworkIOMetricValid(t, metrics.At(idx+2), "system.network.errors", test.expectedStartTime)
 				assertNetworkIOMetricValid(t, metrics.At(idx+3), "system.network.io", test.expectedStartTime)
-				assertNetworkIOMetricValid(t, metrics.At(idx+4), "system.network.packets", test.expectedStartTime)
+				assertNetworkIOMetricValid(t, metrics.At(idx+4), "system.network.packets",
+					test.expectedStartTime)
 				internal.AssertSameTimeStampForMetrics(t, metrics, 1, 5)
 				idx += 4
 			}
@@ -178,16 +195,13 @@ func assertNetworkIOMetricValid(t *testing.T, metric pmetric.Metric, expectedNam
 	}
 	assert.GreaterOrEqual(t, metric.Sum().DataPoints().Len(), 2)
 	internal.AssertSumMetricHasAttribute(t, metric, 0, "device")
-	internal.AssertSumMetricHasAttributeValue(t, metric, 0, "direction",
-		pcommon.NewValueString(metadata.AttributeDirectionTransmit.String()))
-	internal.AssertSumMetricHasAttributeValue(t, metric, 1, "direction",
-		pcommon.NewValueString(metadata.AttributeDirectionReceive.String()))
+	internal.AssertSumMetricHasAttribute(t, metric, 0, "direction")
 }
 
 func assertNetworkConnectionsMetricValid(t *testing.T, metric pmetric.Metric) {
 	assert.Equal(t, metric.Name(), "system.network.connections")
 	internal.AssertSumMetricHasAttributeValue(t, metric, 0, "protocol",
-		pcommon.NewValueString(metadata.AttributeProtocolTcp.String()))
+		pcommon.NewValueStr(metadata.AttributeProtocolTcp.String()))
 	internal.AssertSumMetricHasAttribute(t, metric, 0, "state")
 	assert.Equal(t, 12, metric.Sum().DataPoints().Len())
 }

@@ -1,18 +1,6 @@
-// Copyright 2020 OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
-// nolint:errcheck
 package k8sclusterreceiver
 
 import (
@@ -21,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config"
+	"go.opentelemetry.io/collector/receiver/receivertest"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -38,7 +26,7 @@ func TestSetupMetadataExporters(t *testing.T) {
 		metadataConsumers []metadataConsumer
 	}
 	type args struct {
-		exporters                   map[config.ComponentID]component.Exporter
+		exporters                   map[component.ID]component.Component
 		metadataExportersFromConfig []string
 	}
 	tests := []struct {
@@ -51,8 +39,8 @@ func TestSetupMetadataExporters(t *testing.T) {
 			"Unsupported exporter",
 			fields{},
 			args{
-				exporters: map[config.ComponentID]component.Exporter{
-					config.NewComponentID("nop"): MockExporter{},
+				exporters: map[component.ID]component.Component{
+					component.NewID("nop"): MockExporter{},
 				},
 				metadataExportersFromConfig: []string{"nop"},
 			},
@@ -63,8 +51,8 @@ func TestSetupMetadataExporters(t *testing.T) {
 			fields{
 				metadataConsumers: []metadataConsumer{(&mockExporterWithK8sMetadata{}).ConsumeMetadata},
 			},
-			args{exporters: map[config.ComponentID]component.Exporter{
-				config.NewComponentID("nop"): mockExporterWithK8sMetadata{},
+			args{exporters: map[component.ID]component.Component{
+				component.NewID("nop"): mockExporterWithK8sMetadata{},
 			},
 				metadataExportersFromConfig: []string{"nop"},
 			},
@@ -75,8 +63,8 @@ func TestSetupMetadataExporters(t *testing.T) {
 			fields{
 				metadataConsumers: []metadataConsumer{},
 			},
-			args{exporters: map[config.ComponentID]component.Exporter{
-				config.NewComponentID("nop"): mockExporterWithK8sMetadata{},
+			args{exporters: map[component.ID]component.Component{
+				component.NewID("nop"): mockExporterWithK8sMetadata{},
 			},
 				metadataExportersFromConfig: []string{"nop/1"},
 			},
@@ -183,9 +171,15 @@ func TestPrepareSharedInformerFactory(t *testing.T) {
 						},
 					},
 					{
-						GroupVersion: "autoscaling/v2beta2",
+						GroupVersion: "autoscaling/v2",
 						APIResources: []metav1.APIResource{
 							gvkToAPIResource(gvk.HorizontalPodAutoscaler),
+						},
+					},
+					{
+						GroupVersion: "autoscaling/v2beta2",
+						APIResources: []metav1.APIResource{
+							gvkToAPIResource(gvk.HorizontalPodAutoscalerBeta),
 						},
 					},
 				}
@@ -201,10 +195,10 @@ func TestPrepareSharedInformerFactory(t *testing.T) {
 			rw := &resourceWatcher{
 				client:        newFakeClientWithAllResources(),
 				logger:        obsLogger,
-				dataCollector: collection.NewDataCollector(zap.NewNop(), []string{}, []string{}),
+				dataCollector: collection.NewDataCollector(receivertest.NewNopCreateSettings(), []string{}, []string{}),
 			}
 
-			rw.prepareSharedInformerFactory()
+			assert.NoError(t, rw.prepareSharedInformerFactory())
 
 			// Make sure no warning or error logs are raised
 			assert.Equal(t, 0, logs.Len())

@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package tests
 
@@ -29,14 +18,13 @@ var (
 	mockedConsumedResourceWithType = func() pmetric.Metrics {
 		md := pmetric.NewMetrics()
 		rm := md.ResourceMetrics().AppendEmpty()
-		rm.Resource().Attributes().UpsertString("opencensus.resourcetype", "host")
-		rm.Resource().Attributes().UpsertString("label-key", "label-value")
+		rm.Resource().Attributes().PutStr("opencensus.resourcetype", "host")
+		rm.Resource().Attributes().PutStr("label-key", "label-value")
 		m := rm.ScopeMetrics().AppendEmpty().Metrics().AppendEmpty()
 		m.SetName("metric-name")
 		m.SetDescription("metric-description")
 		m.SetUnit("metric-unit")
-		m.SetDataType(pmetric.MetricDataTypeGauge)
-		m.Gauge().DataPoints().AppendEmpty().SetIntVal(0)
+		m.SetEmptyGauge().DataPoints().AppendEmpty().SetIntValue(0)
 		return md
 	}()
 
@@ -47,8 +35,7 @@ var (
 		m.SetName("metric-name")
 		m.SetDescription("metric-description")
 		m.SetUnit("metric-unit")
-		m.SetDataType(pmetric.MetricDataTypeGauge)
-		m.Gauge().DataPoints().AppendEmpty().SetIntVal(0)
+		m.SetEmptyGauge().DataPoints().AppendEmpty().SetIntValue(0)
 		return md
 	}()
 )
@@ -81,8 +68,8 @@ func getResourceProcessorTestCases() []resourceProcessorTestCase {
 			expectedMetrics: func() pmetric.Metrics {
 				md := pmetric.NewMetrics()
 				rm := md.ResourceMetrics().AppendEmpty()
-				rm.Resource().Attributes().UpsertString("resource-type", "host")
-				rm.Resource().Attributes().UpsertString("label-key", "new-label-value")
+				rm.Resource().Attributes().PutStr("label-key", "new-label-value")
+				rm.Resource().Attributes().PutStr("resource-type", "host")
 				return md
 			}(),
 		},
@@ -100,7 +87,7 @@ func getResourceProcessorTestCases() []resourceProcessorTestCase {
 			expectedMetrics: func() pmetric.Metrics {
 				md := pmetric.NewMetrics()
 				rm := md.ResourceMetrics().AppendEmpty()
-				rm.Resource().Attributes().UpsertString("additional-label-key", "additional-label-value")
+				rm.Resource().Attributes().PutStr("additional-label-key", "additional-label-value")
 				return md
 			}(),
 		},
@@ -173,8 +160,8 @@ func TestMetricResourceProcessor(t *testing.T) {
 
 			expectidMD := test.expectedMetrics
 			require.Equal(t,
-				expectidMD.ResourceMetrics().At(0).Resource().Attributes().Sort(),
-				rm.At(0).Resource().Attributes().Sort(),
+				expectidMD.ResourceMetrics().At(0).Resource().Attributes().AsRaw(),
+				rm.At(0).Resource().Attributes().AsRaw(),
 			)
 		})
 	}

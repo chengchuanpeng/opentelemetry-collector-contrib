@@ -1,16 +1,5 @@
-// Copyright 2019, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package client // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/carbonreceiver/transport/client"
 
@@ -30,10 +19,9 @@ import (
 // and modified for the needs of testing the Carbon receiver package and is not
 // intended/tested to be used in production.
 type Graphite struct {
-	Host    string
-	Port    int
-	Timeout time.Duration
-	Conn    io.Writer
+	Endpoint string
+	Timeout  time.Duration
+	Conn     io.Writer
 }
 
 // Transport is used as an enum to select the type of transport to be used.
@@ -52,8 +40,8 @@ const defaultTimeout = 5
 // https://github.com/census-ecosystem/opencensus-go-exporter-graphite/tree/master/internal/client
 // and modified for the needs of testing the Carbon receiver package and is not
 // intended/tested to be used in production.
-func NewGraphite(transport Transport, host string, port int) (*Graphite, error) {
-	graphite := &Graphite{Host: host, Port: port}
+func NewGraphite(transport Transport, endpoint string) (*Graphite, error) {
+	graphite := &Graphite{Endpoint: endpoint}
 	err := graphite.connect(transport)
 	if err != nil {
 		return nil, err
@@ -68,7 +56,6 @@ func (g *Graphite) connect(transport Transport) error {
 		cl.Close()
 	}
 
-	address := fmt.Sprintf("%s:%d", g.Host, g.Port)
 	if g.Timeout == 0 {
 		g.Timeout = defaultTimeout * time.Second
 	}
@@ -76,10 +63,10 @@ func (g *Graphite) connect(transport Transport) error {
 	var err error
 	switch transport {
 	case TCP:
-		g.Conn, err = net.DialTimeout("tcp", address, g.Timeout)
+		g.Conn, err = net.DialTimeout("tcp", g.Endpoint, g.Timeout)
 	case UDP:
 		var udpAddr *net.UDPAddr
-		udpAddr, err = net.ResolveUDPAddr("udp", address)
+		udpAddr, err = net.ResolveUDPAddr("udp", g.Endpoint)
 		if err != nil {
 			return err
 		}

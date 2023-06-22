@@ -1,16 +1,5 @@
-// Copyright  OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package errctx // import "github.com/open-telemetry/opentelemetry-collector-contrib/extension/observer/ecsobserver/internal/errctx"
 
@@ -43,9 +32,9 @@ type ErrorWithValue interface {
 //
 // It is a good practice to define the key as a constant strange instead of inline literal.
 //
-// 	const taskErrKey = "task"
-// 	return errctx.WithValue(taskErrKey, myTask)
-//  task, ok := errctx.ValueFrom(err, taskErrKey)
+//		const taskErrKey = "task"
+//		return errctx.WithValue(taskErrKey, myTask)
+//	 task, ok := errctx.ValueFrom(err, taskErrKey)
 func WithValue(err error, key string, val interface{}) error {
 	if err == nil {
 		return nil
@@ -94,8 +83,8 @@ func ValueFrom(err error, key string) (interface{}, bool) {
 	if err == nil {
 		return nil, false
 	}
-	verr, ok := err.(ErrorWithValue)
-	if ok {
+	var verr ErrorWithValue
+	if errors.As(err, &verr) {
 		v, vok := verr.Value(key)
 		if vok {
 			return v, vok

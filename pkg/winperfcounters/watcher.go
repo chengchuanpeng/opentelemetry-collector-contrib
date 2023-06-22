@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 //go:build windows
 // +build windows
@@ -19,13 +8,14 @@ package winperfcounters // import "github.com/open-telemetry/opentelemetry-colle
 
 import (
 	"fmt"
+	"time"
 
-	"go.uber.org/multierr"
-
-	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/winperfcounters/internal/pdh"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/winperfcounters/internal/third_party/telegraf/win_perf_counters"
 )
 
-var _ PerfCounterWatcher = (*Watcher)(nil)
+const totalInstanceName = "_Total"
+
+var _ PerfCounterWatcher = (*perfCounter)(nil)
 
 // PerfCounterWatcher represents how to scrape data
 type PerfCounterWatcher interface {
@@ -35,90 +25,33 @@ type PerfCounterWatcher interface {
 	ScrapeData() ([]CounterValue, error)
 	// Close all counters/handles related to the query and free all associated memory.
 	Close() error
-	// GetMetricRep gets the representation of the metric the watcher is connected to
-	GetMetricRep() MetricRep
 }
 
-const instanceLabelName = "instance"
+type CounterValue = win_perf_counters.CounterValue
 
-type Watcher struct {
-	Counter *pdh.PerfCounter
-	MetricRep
+type perfCounter struct {
+	path   string
+	query  win_perf_counters.PerformanceQuery
+	handle win_perf_counters.PDH_HCOUNTER
 }
 
 // NewWatcher creates new PerfCounterWatcher by provided parts of its path.
 func NewWatcher(object, instance, counterName string) (PerfCounterWatcher, error) {
 	path := counterPath(object, instance, counterName)
-	counter, err := pdh.NewPerfCounter(path, true)
+	counter, err := newPerfCounter(path, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create perf counter with path %v: %w", path, err)
 	}
-	return Watcher{Counter: counter}, nil
+	return counter, nil
 }
 
-func (w Watcher) Path() string {
-	return w.Counter.Path()
-}
-
-func (w Watcher) ScrapeData() ([]CounterValue, error) {
-	scrapedCounterValues, err := w.Counter.ScrapeData()
+// NewWatcherFromPath creates new PerfCounterWatcher by provided path.
+func NewWatcherFromPath(path string) (PerfCounterWatcher, error) {
+	counter, err := newPerfCounter(path, true)
 	if err != nil {
-		return []CounterValue{}, err
+		return nil, fmt.Errorf("failed to create perf counter with path %v: %w", path, err)
 	}
-
-	counterValues := []CounterValue{}
-	for _, counterValue := range scrapedCounterValues {
-		metric := w.GetMetricRep()
-		if counterValue.InstanceName != "" {
-			if metric.Attributes == nil {
-				metric.Attributes = map[string]string{instanceLabelName: counterValue.InstanceName}
-			}
-			metric.Attributes[instanceLabelName] = counterValue.InstanceName
-		}
-		counterValues = append(counterValues, CounterValue{MetricRep: metric, Value: counterValue.Value})
-	}
-	return counterValues, nil
-}
-
-func (w Watcher) Close() error {
-	return w.Counter.Close()
-}
-
-func (w Watcher) GetMetricRep() MetricRep {
-	return w.MetricRep
-}
-
-// BuildPaths creates watchers and their paths from configs.
-func (objCfg ObjectConfig) BuildPaths() ([]PerfCounterWatcher, error) {
-	var errs error
-	var watchers []PerfCounterWatcher
-
-	for _, instance := range objCfg.instances() {
-		for _, counterCfg := range objCfg.Counters {
-			counterPath := counterPath(objCfg.Object, instance, counterCfg.Name)
-
-			c, err := pdh.NewPerfCounter(counterPath, true)
-			if err != nil {
-				errs = multierr.Append(errs, fmt.Errorf("counter %v: %w", counterPath, err))
-			} else {
-				newWatcher := Watcher{Counter: c}
-
-				if counterCfg.MetricRep.Name != "" {
-					metricCfg := MetricRep{Name: counterCfg.MetricRep.Name}
-					if counterCfg.Attributes != nil {
-						metricCfg.Attributes = counterCfg.Attributes
-					}
-					newWatcher.MetricRep = metricCfg
-				} else {
-					newWatcher.MetricRep.Name = c.Path()
-				}
-
-				watchers = append(watchers, newWatcher)
-			}
-		}
-	}
-
-	return watchers, errs
+	return counter, nil
 }
 
 func counterPath(object, instance, counterName string) string {
@@ -129,7 +62,101 @@ func counterPath(object, instance, counterName string) string {
 	return fmt.Sprintf("\\%s%s\\%s", object, instance, counterName)
 }
 
-type CounterValue struct {
-	MetricRep
-	Value float64
+// newPerfCounter returns a new performance counter for the specified descriptor.
+func newPerfCounter(counterPath string, collectOnStartup bool) (*perfCounter, error) {
+	query := &win_perf_counters.PerformanceQueryImpl{}
+	err := query.Open()
+	if err != nil {
+		return nil, err
+	}
+
+	var handle win_perf_counters.PDH_HCOUNTER
+	handle, err = query.AddEnglishCounterToQuery(counterPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Some perf counters (e.g. cpu) return the usage stats since the last measure.
+	// We collect data on startup to avoid an invalid initial reading
+	if collectOnStartup {
+		err = query.CollectData()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	counter := &perfCounter{
+		path:   counterPath,
+		query:  query,
+		handle: handle,
+	}
+
+	return counter, nil
+}
+
+func (pc *perfCounter) Close() error {
+	return pc.query.Close()
+}
+
+func (pc *perfCounter) Path() string {
+	return pc.path
+}
+
+func (pc *perfCounter) ScrapeData() ([]CounterValue, error) {
+	if err := pc.query.CollectData(); err != nil {
+		pdhErr, ok := err.(*win_perf_counters.PdhError)
+		if !ok || pdhErr.ErrorCode != win_perf_counters.PDH_CALC_NEGATIVE_DENOMINATOR {
+			return nil, fmt.Errorf("failed to collect data for performance counter '%s': %w", pc.path, err)
+		}
+
+		// A counter rolled over, so the value is invalid
+		// See https://support.microfocus.com/kb/doc.php?id=7010545
+		// Wait one second and retry once
+		time.Sleep(time.Second)
+		if retryErr := pc.query.CollectData(); retryErr != nil {
+			return nil, fmt.Errorf("failed retry for performance counter '%s': %w", pc.path, err)
+		}
+	}
+
+	vals, err := pc.query.GetFormattedCounterArrayDouble(pc.handle)
+	if err != nil {
+		return nil, fmt.Errorf("failed to format data for performance counter '%s': %w", pc.path, err)
+	}
+
+	vals = removeTotalIfMultipleValues(vals)
+	return vals, nil
+}
+
+// ExpandWildCardPath examines the local computer and returns those counter paths that match the given counter path which contains wildcard characters.
+func ExpandWildCardPath(counterPath string) ([]string, error) {
+	return win_perf_counters.ExpandWildCardPath(counterPath)
+}
+
+func removeTotalIfMultipleValues(vals []CounterValue) []CounterValue {
+	if len(vals) == 0 {
+		return vals
+	}
+
+	if len(vals) == 1 {
+		// if there is only one item & the instance name is "_Total", clear the instance name
+		if vals[0].InstanceName == totalInstanceName {
+			vals[0].InstanceName = ""
+		}
+		return vals
+	}
+
+	// if there is more than one item, remove an item that has the instance name "_Total"
+	for i, val := range vals {
+		if val.InstanceName == totalInstanceName {
+			return removeItemAt(vals, i)
+		}
+	}
+
+	return vals
+}
+
+func removeItemAt(vals []CounterValue, idx int) []CounterValue {
+	vals[idx] = vals[len(vals)-1]
+	vals[len(vals)-1] = CounterValue{}
+	return vals[:len(vals)-1]
 }

@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package tanzuobservabilityexporter // import "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/tanzuobservabilityexporter"
 
@@ -20,11 +9,8 @@ import (
 	"net/url"
 	"strconv"
 
-	"go.opentelemetry.io/collector/config"
 	"go.opentelemetry.io/collector/config/confighttp"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
-
-	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/resourcetotelemetry"
 )
 
 type TracesConfig struct {
@@ -33,12 +19,14 @@ type TracesConfig struct {
 
 type MetricsConfig struct {
 	confighttp.HTTPClientSettings `mapstructure:",squash"`
-	ResourceAttributes            resourcetotelemetry.Settings `mapstructure:"resource_attributes"`
+	ResourceAttrsIncluded         bool `mapstructure:"resource_attrs_included"`
+	// AppTagsExcluded will exclude the Resource Attributes `application`, `service.name` -> (service),
+	// `cluster`, and `shard` from the transformed TObs metric if set to true.
+	AppTagsExcluded bool `mapstructure:"app_tags_excluded"`
 }
 
 // Config defines configuration options for the exporter.
 type Config struct {
-	config.ExporterSettings      `mapstructure:",squash"` // squash ensures fields are correctly decoded in embedded struct.
 	exporterhelper.QueueSettings `mapstructure:"sending_queue"`
 	exporterhelper.RetrySettings `mapstructure:"retry_on_failure"`
 
@@ -69,13 +57,13 @@ func (c *Config) Validate() error {
 	if c.hasTracesEndpoint() {
 		tracesHostName, _, err = c.parseTracesEndpoint()
 		if err != nil {
-			return fmt.Errorf("Failed to parse traces.endpoint: %v", err)
+			return fmt.Errorf("failed to parse traces.endpoint: %w", err)
 		}
 	}
 	if c.hasMetricsEndpoint() {
 		metricsHostName, _, err = c.parseMetricsEndpoint()
 		if err != nil {
-			return fmt.Errorf("Failed to parse metrics.endpoint: %v", err)
+			return fmt.Errorf("failed to parse metrics.endpoint: %w", err)
 		}
 	}
 	if c.hasTracesEndpoint() && c.hasMetricsEndpoint() && tracesHostName != metricsHostName {

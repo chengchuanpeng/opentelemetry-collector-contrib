@@ -1,26 +1,18 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//       http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package jaegerreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/jaegerreceiver"
 
 import (
 	"fmt"
+	"net"
+	"strconv"
 	"time"
 
-	"go.opentelemetry.io/collector/config"
+	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/configgrpc"
 	"go.opentelemetry.io/collector/config/confighttp"
+	"go.opentelemetry.io/collector/confmap"
 )
 
 const (
@@ -76,13 +68,12 @@ func DefaultServerConfigUDP() ServerConfigUDP {
 
 // Config defines configuration for Jaeger receiver.
 type Config struct {
-	config.ReceiverSettings `mapstructure:",squash"` // squash ensures fields are correctly decoded in embedded struct
-	Protocols               `mapstructure:"protocols"`
-	RemoteSampling          *RemoteSamplingConfig `mapstructure:"remote_sampling"`
+	Protocols      `mapstructure:"protocols"`
+	RemoteSampling *RemoteSamplingConfig `mapstructure:"remote_sampling"`
 }
 
-var _ config.Receiver = (*Config)(nil)
-var _ config.Unmarshallable = (*Config)(nil)
+var _ component.Config = (*Config)(nil)
+var _ confmap.Unmarshaler = (*Config)(nil)
 
 // Validate checks the receiver configuration is valid
 func (cfg *Config) Validate() error {
@@ -93,38 +84,36 @@ func (cfg *Config) Validate() error {
 		return fmt.Errorf("must specify at least one protocol when using the Jaeger receiver")
 	}
 
-	var grpcPort int
 	if cfg.GRPC != nil {
-		var err error
-		if grpcPort, err = extractPortFromEndpoint(cfg.GRPC.NetAddr.Endpoint); err != nil {
-			return fmt.Errorf("unable to extract port for the gRPC endpoint: %w", err)
+		if err := checkPortFromEndpoint(cfg.GRPC.NetAddr.Endpoint); err != nil {
+			return fmt.Errorf("invalid port number for the gRPC endpoint: %w", err)
 		}
 	}
 
 	if cfg.ThriftHTTP != nil {
-		if _, err := extractPortFromEndpoint(cfg.ThriftHTTP.Endpoint); err != nil {
-			return fmt.Errorf("unable to extract port for the Thrift HTTP endpoint: %w", err)
+		if err := checkPortFromEndpoint(cfg.ThriftHTTP.Endpoint); err != nil {
+			return fmt.Errorf("invalid port number for the Thrift HTTP endpoint: %w", err)
 		}
 	}
 
 	if cfg.ThriftBinary != nil {
-		if _, err := extractPortFromEndpoint(cfg.ThriftBinary.Endpoint); err != nil {
-			return fmt.Errorf("unable to extract port for the Thrift UDP Binary endpoint: %w", err)
+		if err := checkPortFromEndpoint(cfg.ThriftBinary.Endpoint); err != nil {
+			return fmt.Errorf("invalid port number for the Thrift UDP Binary endpoint: %w", err)
 		}
 	}
 
 	if cfg.ThriftCompact != nil {
-		if _, err := extractPortFromEndpoint(cfg.ThriftCompact.Endpoint); err != nil {
-			return fmt.Errorf("unable to extract port for the Thrift UDP Compact endpoint: %w", err)
+		if err := checkPortFromEndpoint(cfg.ThriftCompact.Endpoint); err != nil {
+			return fmt.Errorf("invalid port number for the Thrift UDP Compact endpoint: %w", err)
 		}
 	}
 
 	if cfg.RemoteSampling != nil {
-		if _, err := extractPortFromEndpoint(cfg.RemoteSampling.HostEndpoint); err != nil {
-			return fmt.Errorf("unable to extract port for the Remote Sampling endpoint: %w", err)
+		if err := checkPortFromEndpoint(cfg.RemoteSampling.HostEndpoint); err != nil {
+			return fmt.Errorf("invalid port number for the Remote Sampling endpoint: %w", err)
 		}
 
-		if len(cfg.RemoteSampling.StrategyFile) != 0 && grpcPort == 0 {
+		if len(cfg.RemoteSampling.StrategyFile) != 0 && cfg.GRPC == nil {
 			return fmt.Errorf("strategy file requires the gRPC protocol to be enabled")
 		}
 
@@ -137,14 +126,14 @@ func (cfg *Config) Validate() error {
 }
 
 // Unmarshal a config.Parser into the config struct.
-func (cfg *Config) Unmarshal(componentParser *config.Map) error {
+func (cfg *Config) Unmarshal(componentParser *confmap.Conf) error {
 	if componentParser == nil || len(componentParser.AllKeys()) == 0 {
 		return fmt.Errorf("empty config for Jaeger receiver")
 	}
 
 	// UnmarshalExact will not set struct properties to nil even if no key is provided,
 	// so set the protocol structs to nil where the keys were omitted.
-	err := componentParser.UnmarshalExact(cfg)
+	err := componentParser.Unmarshal(cfg, confmap.WithErrorUnused())
 	if err != nil {
 		return err
 	}
@@ -167,5 +156,22 @@ func (cfg *Config) Unmarshal(componentParser *config.Map) error {
 		cfg.ThriftCompact = nil
 	}
 
+	return nil
+}
+
+// checkPortFromEndpoint checks that the endpoint string contains a port in the format "address:port". If the
+// port number cannot be parsed, returns an error.
+func checkPortFromEndpoint(endpoint string) error {
+	_, portStr, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return fmt.Errorf("endpoint is not formatted correctly: %w", err)
+	}
+	port, err := strconv.ParseInt(portStr, 10, 0)
+	if err != nil {
+		return fmt.Errorf("endpoint port is not a number: %w", err)
+	}
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("port number must be between 1 and 65535")
+	}
 	return nil
 }

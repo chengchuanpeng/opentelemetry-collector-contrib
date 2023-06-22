@@ -1,16 +1,5 @@
-// Copyright 2019, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package collectdreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/collectdreceiver"
 
@@ -95,7 +84,7 @@ func (r *collectDRecord) appendToMetrics(metrics []*metricspb.Metric, defaultLab
 
 			metric, err := r.newMetric(metricName, dsType, val, labels)
 			if err != nil {
-				return metrics, fmt.Errorf("error processing metric %s: %v", sanitize.String(metricName), err)
+				return metrics, fmt.Errorf("error processing metric %s: %w", sanitize.String(metricName), err)
 			}
 			metrics = append(metrics, metric)
 
@@ -108,7 +97,7 @@ func (r *collectDRecord) newMetric(name string, dsType *string, val *json.Number
 	metric := &metricspb.Metric{}
 	point, isDouble, err := r.newPoint(val)
 	if err != nil {
-		return metric, fmt.Errorf("error processing metric %s: %v", name, err)
+		return metric, fmt.Errorf("error processing metric %s: %w", name, err)
 	}
 
 	lKeys, lValues := labelKeysAndValues(labels)
@@ -159,7 +148,7 @@ func (r *collectDRecord) newPoint(val *json.Number) (*metricspb.Point, bool, err
 	} else {
 		v, err := val.Float64()
 		if err != nil {
-			return nil, isDouble, fmt.Errorf("value could not be decoded: %v", err)
+			return nil, isDouble, fmt.Errorf("value could not be decoded: %w", err)
 		}
 		p.Value = &metricspb.Point_DoubleValue{DoubleValue: v}
 	}
@@ -171,14 +160,14 @@ func (r *collectDRecord) newPoint(val *json.Number) (*metricspb.Point, bool, err
 // becomes a dimension.
 func (r *collectDRecord) getReasonableMetricName(index int, attrs map[string]string) (string, bool) {
 	usedDsName := false
-	cap := 0
+	capacity := 0
 	if r.TypeS != nil {
-		cap += len(*r.TypeS)
+		capacity += len(*r.TypeS)
 	}
 	if r.TypeInstance != nil {
-		cap += len(*r.TypeInstance)
+		capacity += len(*r.TypeInstance)
 	}
-	parts := make([]byte, 0, cap)
+	parts := make([]byte, 0, capacity)
 
 	if !isNilOrEmpty(r.TypeS) {
 		parts = append(parts, *r.TypeS...)

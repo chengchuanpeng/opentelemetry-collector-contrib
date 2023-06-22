@@ -1,16 +1,5 @@
-// Copyright OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package signalfx // import "github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/signalfx"
 
@@ -36,10 +25,10 @@ var (
 )
 
 const (
-	// Some standard dimension keys. upper bound dimension key for histogram buckets.
-	bucketDimensionKey = "upper_bound"
+	// prometheus compatible dimension key for histogram buckets.
+	bucketDimensionKey = "le"
 
-	// Some standard dimension keys. quantile dimension key for summary quantiles.
+	// quantile dimension key for summary quantiles.
 	quantileDimensionKey = "quantile"
 )
 
@@ -73,14 +62,14 @@ func (ft *FromTranslator) FromMetric(m pmetric.Metric, extraDimensions []*sfxpb.
 
 	mt := fromMetricTypeToMetricType(m)
 
-	switch m.DataType() {
-	case pmetric.MetricDataTypeGauge:
+	switch m.Type() {
+	case pmetric.MetricTypeGauge:
 		dps = convertNumberDataPoints(m.Gauge().DataPoints(), m.Name(), mt, extraDimensions)
-	case pmetric.MetricDataTypeSum:
+	case pmetric.MetricTypeSum:
 		dps = convertNumberDataPoints(m.Sum().DataPoints(), m.Name(), mt, extraDimensions)
-	case pmetric.MetricDataTypeHistogram:
+	case pmetric.MetricTypeHistogram:
 		dps = convertHistogram(m.Histogram().DataPoints(), m.Name(), mt, extraDimensions)
-	case pmetric.MetricDataTypeSummary:
+	case pmetric.MetricTypeSummary:
 		dps = convertSummaryDataPoints(m.Summary().DataPoints(), m.Name(), extraDimensions)
 	}
 
@@ -88,21 +77,21 @@ func (ft *FromTranslator) FromMetric(m pmetric.Metric, extraDimensions []*sfxpb.
 }
 
 func fromMetricTypeToMetricType(metric pmetric.Metric) *sfxpb.MetricType {
-	switch metric.DataType() {
-	case pmetric.MetricDataTypeGauge:
+	switch metric.Type() {
+	case pmetric.MetricTypeGauge:
 		return &sfxMetricTypeGauge
 
-	case pmetric.MetricDataTypeSum:
+	case pmetric.MetricTypeSum:
 		if !metric.Sum().IsMonotonic() {
 			return &sfxMetricTypeGauge
 		}
-		if metric.Sum().AggregationTemporality() == pmetric.MetricAggregationTemporalityDelta {
+		if metric.Sum().AggregationTemporality() == pmetric.AggregationTemporalityDelta {
 			return &sfxMetricTypeCounter
 		}
 		return &sfxMetricTypeCumulativeCounter
 
-	case pmetric.MetricDataTypeHistogram:
-		if metric.Histogram().AggregationTemporality() == pmetric.MetricAggregationTemporalityDelta {
+	case pmetric.MetricTypeHistogram:
+		if metric.Histogram().AggregationTemporality() == pmetric.AggregationTemporalityDelta {
 			return &sfxMetricTypeCounter
 		}
 		return &sfxMetricTypeCumulativeCounter
@@ -120,10 +109,10 @@ func convertNumberDataPoints(in pmetric.NumberDataPointSlice, name string, mt *s
 		dp := dps.appendPoint(name, mt, fromTimestamp(inDp.Timestamp()), attributesToDimensions(inDp.Attributes(), extraDims))
 		switch inDp.ValueType() {
 		case pmetric.NumberDataPointValueTypeInt:
-			val := inDp.IntVal()
+			val := inDp.IntValue()
 			dp.Value.IntValue = &val
 		case pmetric.NumberDataPointValueTypeDouble:
-			val := inDp.DoubleVal()
+			val := inDp.DoubleValue()
 			dp.Value.DoubleValue = &val
 		}
 	}
@@ -133,7 +122,19 @@ func convertNumberDataPoints(in pmetric.NumberDataPointSlice, name string, mt *s
 func convertHistogram(in pmetric.HistogramDataPointSlice, name string, mt *sfxpb.MetricType, extraDims []*sfxpb.Dimension) []*sfxpb.DataPoint {
 	var numDPs int
 	for i := 0; i < in.Len(); i++ {
-		numDPs += 2 + len(in.At(i).MBucketCounts())
+		histDP := in.At(i)
+		numDPs += 1 + histDP.BucketCounts().Len()
+		if histDP.HasSum() {
+			numDPs++
+		}
+
+		if histDP.HasMin() {
+			numDPs++
+		}
+
+		if histDP.HasMax() {
+			numDPs++
+		}
 	}
 	dps := newDpsBuilder(numDPs)
 
@@ -146,23 +147,42 @@ func convertHistogram(in pmetric.HistogramDataPointSlice, name string, mt *sfxpb
 		count := int64(histDP.Count())
 		countDP.Value.IntValue = &count
 
-		sumDP := dps.appendPoint(name, mt, ts, dims)
-		sum := histDP.Sum()
-		sumDP.Value.DoubleValue = &sum
+		if histDP.HasSum() {
+			sumDP := dps.appendPoint(name+"_sum", mt, ts, dims)
+			sum := histDP.Sum()
+			sumDP.Value.DoubleValue = &sum
+		}
 
-		bounds := histDP.MExplicitBounds()
-		counts := histDP.MBucketCounts()
+		if histDP.HasMin() {
+			// Min is always a gauge.
+			minDP := dps.appendPoint(name+"_min", &sfxMetricTypeGauge, ts, dims)
+			min := histDP.Min()
+			minDP.Value.DoubleValue = &min
+		}
+
+		if histDP.HasMax() {
+			// Max is always a gauge.
+			maxDP := dps.appendPoint(name+"_max", &sfxMetricTypeGauge, ts, dims)
+			max := histDP.Max()
+			maxDP.Value.DoubleValue = &max
+		}
+
+		bounds := histDP.ExplicitBounds()
+		counts := histDP.BucketCounts()
 
 		// Spec says counts is optional but if present it must have one more
 		// element than the bounds array.
-		if len(counts) > 0 && len(counts) != len(bounds)+1 {
+		if counts.Len() > 0 && counts.Len() != bounds.Len()+1 {
 			continue
 		}
 
-		for j, c := range counts {
+		bucketMetricName := name + "_bucket"
+		var val uint64
+		for j := 0; j < counts.Len(); j++ {
+			val += counts.At(j)
 			bound := infinityBoundSFxDimValue
-			if j < len(bounds) {
-				bound = float64ToDimValue(bounds[j])
+			if j < bounds.Len() {
+				bound = float64ToDimValue(bounds.At(j))
 			}
 			cloneDim := make([]*sfxpb.Dimension, len(dims)+1)
 			copy(cloneDim, dims)
@@ -170,8 +190,8 @@ func convertHistogram(in pmetric.HistogramDataPointSlice, name string, mt *sfxpb
 				Key:   bucketDimensionKey,
 				Value: bound,
 			}
-			dp := dps.appendPoint(name+"_bucket", mt, ts, cloneDim)
-			cInt := int64(c)
+			dp := dps.appendPoint(bucketMetricName, mt, ts, cloneDim)
+			cInt := int64(val)
 			dp.Value.IntValue = &cInt
 		}
 	}
@@ -196,7 +216,8 @@ func convertSummaryDataPoints(in pmetric.SummaryDataPointSlice, name string, ext
 		c := int64(inDp.Count())
 		countDP.Value.IntValue = &c
 
-		sumDP := dps.appendPoint(name, &sfxMetricTypeCumulativeCounter, ts, dims)
+		sumName := name + "_sum"
+		sumDP := dps.appendPoint(sumName, &sfxMetricTypeCumulativeCounter, ts, dims)
 		sum := inDp.Sum()
 		sumDP.Value.DoubleValue = &sum
 

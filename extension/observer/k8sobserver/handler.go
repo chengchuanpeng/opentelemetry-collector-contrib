@@ -1,22 +1,11 @@
-// Copyright 2020, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package k8sobserver // import "github.com/open-telemetry/opentelemetry-collector-contrib/extension/observer/k8sobserver"
 
 import (
-	"encoding/json"
 	"reflect"
+	"sync"
 
 	"go.uber.org/zap"
 	v1 "k8s.io/api/core/v1"
@@ -25,17 +14,34 @@ import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/extension/observer"
 )
 
+var _ cache.ResourceEventHandler = (*handler)(nil)
+var _ observer.EndpointsLister = (*handler)(nil)
+
 // handler handles k8s cache informer callbacks.
 type handler struct {
 	// idNamespace should be some unique token to distinguish multiple handler instances.
 	idNamespace string
-	// listener is the callback for discovered endpoints.
-	listener observer.Notify
-	logger   *zap.Logger
+	// endpoints is a map[observer.EndpointID]observer.Endpoint all existing endpoints at any given moment
+	endpoints *sync.Map
+
+	logger *zap.Logger
+}
+
+func (h *handler) ListEndpoints() []observer.Endpoint {
+	var endpoints []observer.Endpoint
+	h.endpoints.Range(func(endpointID, endpoint interface{}) bool {
+		if e, ok := endpoint.(observer.Endpoint); ok {
+			endpoints = append(endpoints, e)
+		} else {
+			h.logger.Info("failed listing endpoint", zap.Any("endpointID", endpointID), zap.Any("endpoint", endpoint))
+		}
+		return true
+	})
+	return endpoints
 }
 
 // OnAdd is called in response to a new pod or node being detected.
-func (h *handler) OnAdd(objectInterface interface{}) {
+func (h *handler) OnAdd(objectInterface interface{}, _ bool) {
 	var endpoints []observer.Endpoint
 
 	switch object := objectInterface.(type) {
@@ -48,14 +54,8 @@ func (h *handler) OnAdd(objectInterface interface{}) {
 	}
 
 	for _, endpoint := range endpoints {
-		if env, err := endpoint.Env(); err == nil {
-			if marshaled, err := json.Marshal(env); err == nil {
-				h.logger.Debug("endpoint added", zap.String("env", string(marshaled)))
-			}
-		}
+		h.endpoints.Store(endpoint.ID, endpoint)
 	}
-
-	h.listener.OnAdd(endpoints)
 }
 
 // OnUpdate is called in response to an existing pod or node changing.
@@ -113,41 +113,21 @@ func (h *handler) OnUpdate(oldObjectInterface, newObjectInterface interface{}) {
 
 	if len(removedEndpoints) > 0 {
 		for _, endpoint := range removedEndpoints {
-			if env, err := endpoint.Env(); err == nil {
-				if marshaled, err := json.Marshal(env); err == nil {
-					h.logger.Debug("endpoint removed (via update)", zap.String("env", string(marshaled)))
-				}
-			}
+			h.endpoints.Delete(endpoint.ID)
 		}
-		h.listener.OnRemove(removedEndpoints)
 	}
 
 	if len(updatedEndpoints) > 0 {
 		for _, endpoint := range updatedEndpoints {
-			if env, err := endpoint.Env(); err == nil {
-				if marshaled, err := json.Marshal(env); err == nil {
-					h.logger.Debug("endpoint changed (via update)", zap.String("env", string(marshaled)))
-				}
-			}
+			h.endpoints.Store(endpoint.ID, endpoint)
 		}
-		h.listener.OnChange(updatedEndpoints)
 	}
 
 	if len(addedEndpoints) > 0 {
 		for _, endpoint := range addedEndpoints {
-			if env, err := endpoint.Env(); err == nil {
-				if marshaled, err := json.Marshal(env); err == nil {
-					h.logger.Debug("endpoint added (via update)", zap.String("env", string(marshaled)))
-				}
-			}
+			h.endpoints.Store(endpoint.ID, endpoint)
 		}
-		h.listener.OnAdd(addedEndpoints)
 	}
-
-	// TODO: can changes be missed where a pod is deleted but we don't
-	// send remove notifications for some of its endpoints? If not provable
-	// then maybe keep track of pod -> endpoint association to be sure
-	// they are all cleaned up.
 }
 
 // OnDelete is called in response to a pod or node being deleted.
@@ -173,12 +153,7 @@ func (h *handler) OnDelete(objectInterface interface{}) {
 	}
 	if len(endpoints) != 0 {
 		for _, endpoint := range endpoints {
-			if env, err := endpoint.Env(); err == nil {
-				if marshaled, err := json.Marshal(env); err == nil {
-					h.logger.Debug("endpoint deleted", zap.String("env", string(marshaled)))
-				}
-			}
+			h.endpoints.Delete(endpoint.ID)
 		}
-		h.listener.OnRemove(endpoints)
 	}
 }

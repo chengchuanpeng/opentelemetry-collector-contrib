@@ -1,16 +1,5 @@
-// Copyright 2020 OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package k8sattributesprocessor // import "github.com/open-telemetry/opentelemetry-collector-contrib/processor/k8sattributesprocessor"
 
@@ -32,7 +21,6 @@ import (
 )
 
 const (
-	k8sIPLabelName    string = "k8s.pod.ip"
 	clientIPLabelName string = "ip"
 )
 
@@ -52,7 +40,7 @@ func (kp *kubernetesprocessor) initKubeClient(logger *zap.Logger, kubeClient kub
 		kubeClient = kube.New
 	}
 	if !kp.passthroughMode {
-		kc, err := kubeClient(logger, kp.apiConfig, kp.rules, kp.filters, kp.podAssociations, kp.podIgnore, nil, nil, nil)
+		kc, err := kubeClient(logger, kp.apiConfig, kp.rules, kp.filters, kp.podAssociations, kp.podIgnore, nil, nil, nil, nil)
 		if err != nil {
 			return err
 		}
@@ -69,6 +57,9 @@ func (kp *kubernetesprocessor) Start(_ context.Context, _ component.Host) error 
 }
 
 func (kp *kubernetesprocessor) Shutdown(context.Context) error {
+	if kp.kc == nil {
+		return nil
+	}
 	if !kp.passthroughMode {
 		kp.kc.Stop()
 	}
@@ -107,19 +98,29 @@ func (kp *kubernetesprocessor) processLogs(ctx context.Context, ld plog.Logs) (p
 
 // processResource adds Pod metadata tags to resource based on pod association configuration
 func (kp *kubernetesprocessor) processResource(ctx context.Context, resource pcommon.Resource) {
-	podIdentifierKey, podIdentifierValue := extractPodID(ctx, resource.Attributes(), kp.podAssociations)
-	if podIdentifierKey != "" {
-		resource.Attributes().InsertString(podIdentifierKey, string(podIdentifierValue))
-	}
+	podIdentifierValue := extractPodID(ctx, resource.Attributes(), kp.podAssociations)
+	kp.logger.Debug("evaluating pod identifier", zap.Any("value", podIdentifierValue))
 
+	for i := range podIdentifierValue {
+		if podIdentifierValue[i].Source.From == kube.ConnectionSource && podIdentifierValue[i].Value != "" {
+			if _, found := resource.Attributes().Get(kube.K8sIPLabelName); !found {
+				resource.Attributes().PutStr(kube.K8sIPLabelName, podIdentifierValue[i].Value)
+			}
+			break
+		}
+	}
 	if kp.passthroughMode {
 		return
 	}
 
-	if podIdentifierKey != "" {
+	if podIdentifierValue.IsNotEmpty() {
 		if pod, ok := kp.kc.GetPod(podIdentifierValue); ok {
+			kp.logger.Debug("getting the pod", zap.Any("pod", pod))
+
 			for key, val := range pod.Attributes {
-				resource.Attributes().InsertString(key, val)
+				if _, found := resource.Attributes().Get(key); !found {
+					resource.Attributes().PutStr(key, val)
+				}
 			}
 			kp.addContainerAttributes(resource.Attributes(), pod)
 		}
@@ -129,7 +130,9 @@ func (kp *kubernetesprocessor) processResource(ctx context.Context, resource pco
 	if namespace != "" {
 		attrsToAdd := kp.getAttributesForPodsNamespace(namespace)
 		for key, val := range attrsToAdd {
-			resource.Attributes().InsertString(key, val)
+			if _, found := resource.Attributes().Get(key); !found {
+				resource.Attributes().PutStr(key, val)
+			}
 		}
 	}
 }
@@ -137,30 +140,63 @@ func (kp *kubernetesprocessor) processResource(ctx context.Context, resource pco
 // addContainerAttributes looks if pod has any container identifiers and adds additional container attributes
 func (kp *kubernetesprocessor) addContainerAttributes(attrs pcommon.Map, pod *kube.Pod) {
 	containerName := stringAttributeFromMap(attrs, conventions.AttributeK8SContainerName)
-	if containerName == "" {
+	containerID := stringAttributeFromMap(attrs, conventions.AttributeContainerID)
+	var (
+		containerSpec *kube.Container
+		ok            bool
+	)
+	switch {
+	case containerName != "":
+		containerSpec, ok = pod.Containers.ByName[containerName]
+		if !ok {
+			return
+		}
+	case containerID != "":
+		containerSpec, ok = pod.Containers.ByID[containerID]
+		if !ok {
+			return
+		}
+	default:
 		return
 	}
-	containerSpec, ok := pod.Containers[containerName]
-	if !ok {
-		return
+	if containerSpec.Name != "" {
+		if _, found := attrs.Get(conventions.AttributeK8SContainerName); !found {
+			attrs.PutStr(conventions.AttributeK8SContainerName, containerSpec.Name)
+		}
 	}
-
 	if containerSpec.ImageName != "" {
-		attrs.InsertString(conventions.AttributeContainerImageName, containerSpec.ImageName)
+		if _, found := attrs.Get(conventions.AttributeContainerImageName); !found {
+			attrs.PutStr(conventions.AttributeContainerImageName, containerSpec.ImageName)
+		}
 	}
 	if containerSpec.ImageTag != "" {
-		attrs.InsertString(conventions.AttributeContainerImageTag, containerSpec.ImageTag)
+		if _, found := attrs.Get(conventions.AttributeContainerImageTag); !found {
+			attrs.PutStr(conventions.AttributeContainerImageTag, containerSpec.ImageTag)
+		}
 	}
-
+	// attempt to get container ID from restart count
+	runID := -1
 	runIDAttr, ok := attrs.Get(conventions.AttributeK8SContainerRestartCount)
 	if ok {
-		runID, err := intFromAttribute(runIDAttr)
-		if err == nil {
-			if containerStatus, ok := containerSpec.Statuses[runID]; ok && containerStatus.ContainerID != "" {
-				attrs.InsertString(conventions.AttributeContainerID, containerStatus.ContainerID)
-			}
-		} else {
+		containerRunID, err := intFromAttribute(runIDAttr)
+		if err != nil {
 			kp.logger.Debug(err.Error())
+		} else {
+			runID = containerRunID
+		}
+	} else {
+		// take the highest runID (restart count) which represents the currently running container in most cases
+		for containerRunID := range containerSpec.Statuses {
+			if containerRunID > runID {
+				runID = containerRunID
+			}
+		}
+	}
+	if runID != -1 {
+		if containerStatus, ok := containerSpec.Statuses[runID]; ok && containerStatus.ContainerID != "" {
+			if _, found := attrs.Get(conventions.AttributeContainerID); !found {
+				attrs.PutStr(conventions.AttributeContainerID, containerStatus.ContainerID)
+			}
 		}
 	}
 }
@@ -177,9 +213,9 @@ func (kp *kubernetesprocessor) getAttributesForPodsNamespace(namespace string) m
 func intFromAttribute(val pcommon.Value) (int, error) {
 	switch val.Type() {
 	case pcommon.ValueTypeInt:
-		return int(val.IntVal()), nil
-	case pcommon.ValueTypeString:
-		i, err := strconv.Atoi(val.StringVal())
+		return int(val.Int()), nil
+	case pcommon.ValueTypeStr:
+		i, err := strconv.Atoi(val.Str())
 		if err != nil {
 			return 0, err
 		}

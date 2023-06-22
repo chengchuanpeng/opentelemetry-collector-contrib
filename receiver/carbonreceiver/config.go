@@ -1,16 +1,5 @@
-// Copyright 2019, OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package carbonreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/carbonreceiver"
 
@@ -18,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"go.opentelemetry.io/collector/config"
 	"go.opentelemetry.io/collector/config/confignet"
+	"go.opentelemetry.io/collector/confmap"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/carbonreceiver/protocol"
 )
@@ -31,12 +20,10 @@ const (
 	parserConfigSection = "parser"
 )
 
-var _ config.Unmarshallable = (*Config)(nil)
+var _ confmap.Unmarshaler = (*Config)(nil)
 
 // Config defines configuration for the Carbon receiver.
 type Config struct {
-	config.ReceiverSettings `mapstructure:",squash"`
-
 	confignet.NetAddr `mapstructure:",squash"`
 
 	// TCPIdleTimeout is the timout for idle TCP connections, it is ignored
@@ -48,7 +35,7 @@ type Config struct {
 	Parser *protocol.Config `mapstructure:"parser"`
 }
 
-func (cfg *Config) Unmarshal(componentParser *config.Map) error {
+func (cfg *Config) Unmarshal(componentParser *confmap.Conf) error {
 	if componentParser == nil {
 		// The section is empty nothing to do, using the default config.
 		return nil
@@ -68,13 +55,9 @@ func (cfg *Config) Unmarshal(componentParser *config.Map) error {
 	}
 
 	if err := protocol.LoadParserConfig(vParserCfg, cfg.Parser); err != nil {
-		return fmt.Errorf(
-			"error on %q section for %s: %v",
-			parserConfigSection,
-			cfg.ID().String(),
-			err)
+		return fmt.Errorf("error on %q section: %w", parserConfigSection, err)
 	}
 
 	// Unmarshal exact to validate the config keys.
-	return componentParser.UnmarshalExact(cfg)
+	return componentParser.Unmarshal(cfg, confmap.WithErrorUnused())
 }
