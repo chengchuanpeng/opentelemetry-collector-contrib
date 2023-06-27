@@ -30,7 +30,7 @@ jobs:
           - pkg
           - other
     runs-on: windows-latest
-    if: ${{ github.actor != 'dependabot[bot]' && (contains(github.event.pull_request.labels.*.name, 'Run Windows') || github.event_name == 'push') }}
+    if: ${{ github.actor != 'dependabot[bot]' }}
     steps:
       - uses: actions/checkout@v3
       - if: matrix.group == 'receiver-0'
@@ -51,7 +51,7 @@ jobs:
       - name: Run Unit tests
         run: make -j2 gotest GROUP=${{ matrix.group }}
   windows-unittest:
-    if: ${{ github.actor != 'dependabot[bot]' && (contains(github.event.pull_request.labels.*.name, 'Run Windows') || github.event_name == 'push') }}
+    if: ${{ github.actor != 'dependabot[bot]' }}
     runs-on: windows-latest
     needs: [windows-unittest-matrix]
     steps:
