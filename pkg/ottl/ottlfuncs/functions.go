@@ -38,7 +38,9 @@ func converters[K any]() []ottl.Factory[K] {
 		NewConvertCaseFactory[K](),
 		NewFnvFactory[K](),
 		NewIntFactory[K](),
+		NewIsMapFactory[K](),
 		NewIsMatchFactory[K](),
+		NewIsStringFactory[K](),
 		NewLogFactory[K](),
 		NewParseJSONFactory[K](),
 		NewSHA1Factory[K](),
@@ -46,6 +48,7 @@ func converters[K any]() []ottl.Factory[K] {
 		NewSpanIDFactory[K](),
 		NewSplitFactory[K](),
 		NewSubstringFactory[K](),
+		NewTimeFactory[K](),
 		NewTraceIDFactory[K](),
 		NewUUIDFactory[K](),
 	}
