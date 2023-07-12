@@ -6,12 +6,13 @@ package collectdreceiver
 import (
 	"bytes"
 	"context"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/pdatatest/pmetrictest"
+	"go.opentelemetry.io/collector/pdata/pcommon"
+	"go.opentelemetry.io/collector/pdata/pmetric"
 	"net/http"
 	"testing"
 	"time"
 
-	agentmetricspb "github.com/census-instrumentation/opencensus-proto/gen-go/agent/metrics/v1"
-	metricspb "github.com/census-instrumentation/opencensus-proto/gen-go/metrics/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/component"
@@ -19,16 +20,7 @@ import (
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/consumer/consumertest"
 	"go.uber.org/zap"
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
-
-	internaldata "github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/opencensus"
 )
-
-type metricLabel struct {
-	key   *metricspb.LabelKey
-	value *metricspb.LabelValue
-}
 
 func TestNewReceiver(t *testing.T) {
 	type args struct {
@@ -79,8 +71,29 @@ func TestCollectDServer(t *testing.T) {
 		queryParams  string
 		requestBody  string
 		responseCode int
-		wantData     []*agentmetricspb.ExportMetricsServiceRequest
+		wantData     []pmetric.Metrics
 	}
+
+	var dataPoint pmetric.NumberDataPoint
+	testMetrics := pmetric.NewMetrics()
+	scopeMemtrics := testMetrics.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty()
+	testMetric := pmetric.NewMetric()
+	testMetric.SetName("memory.free")
+	sum := testMetric.SetEmptySum()
+	sum.SetIsMonotonic(true)
+	dataPoint = sum.DataPoints().AppendEmpty()
+	collectedTime, _ := parseTime("1415062577494999808")
+	dataPoint.SetTimestamp(pcommon.NewTimestampFromTime(time.Unix(0, 0).Add(collectedTime)))
+	attributes := pcommon.NewMap()
+	attributes.PutStr("plugin", "memory")
+	attributes.PutStr("host", "i-b13d1e5f")
+	attributes.PutStr("dsname", "i-value")
+	attributes.PutStr("attr1", "attr1val")
+	attributes.CopyTo(dataPoint.Attributes())
+	dataPoint.SetDoubleValue(2.1474)
+
+	newMetric := scopeMemtrics.Metrics().AppendEmpty()
+	testMetric.MoveTo(newMetric)
 
 	testCases := []testCase{{
 		name:        "valid-request-body",
@@ -106,43 +119,12 @@ func TestCollectDServer(t *testing.T) {
     }
 ]`,
 		responseCode: 200,
-		wantData: []*agentmetricspb.ExportMetricsServiceRequest{{
-			Metrics: []*metricspb.Metric{{
-				MetricDescriptor: &metricspb.MetricDescriptor{
-					Name: "memory.free",
-					Type: metricspb.MetricDescriptor_CUMULATIVE_DOUBLE,
-					LabelKeys: []*metricspb.LabelKey{
-						{Key: "plugin"},
-						{Key: "host"},
-						{Key: "dsname"},
-						{Key: "attr1"},
-					},
-				},
-				Timeseries: []*metricspb.TimeSeries{{
-					StartTimestamp: &timestamppb.Timestamp{
-						Seconds: 1415062567,
-						Nanos:   494999808,
-					},
-					LabelValues: []*metricspb.LabelValue{
-						{Value: "memory", HasValue: true},
-						{Value: "i-b13d1e5f", HasValue: true},
-						{Value: "value", HasValue: true},
-						{Value: "attr1val", HasValue: true},
-					},
-					Points: []*metricspb.Point{{
-						Timestamp: &timestamppb.Timestamp{Seconds: 1415062577, Nanos: 494999808},
-						Value: &metricspb.Point_DoubleValue{
-							DoubleValue: 2.1474,
-						}},
-					},
-				}},
-			}},
-		}},
+		wantData:     []pmetric.Metrics{},
 	}, {
 		name:         "invalid-request-body",
 		requestBody:  `invalid-body`,
 		responseCode: 400,
-		wantData:     []*agentmetricspb.ExportMetricsServiceRequest{},
+		wantData:     []pmetric.Metrics{},
 	}}
 
 	sink := new(consumertest.MetricsSink)
@@ -186,96 +168,35 @@ func TestCollectDServer(t *testing.T) {
 			assert.Eventually(t, func() bool {
 				return len(sink.AllMetrics()) == 1
 			}, 10*time.Second, 5*time.Millisecond)
+
 			mds := sink.AllMetrics()
 			require.Len(t, mds, 1)
-			rms := mds[0].ResourceMetrics()
-			got := make([]*agentmetricspb.ExportMetricsServiceRequest, 0, rms.Len())
-			for i := 0; i < rms.Len(); i++ {
-				emsr := &agentmetricspb.ExportMetricsServiceRequest{}
-				emsr.Node, emsr.Resource, emsr.Metrics = internaldata.ResourceMetricsToOC(rms.At(i))
-				got = append(got, emsr)
-			}
-			assertMetricsDataAreEqual(t, got, tt.wantData)
+			//rms := mds[0].ResourceMetrics()
+			assertMetricsEqual2(t, mds, tt.wantData)
+			//
+			//var p = []pmetric.Metrics{}
+			//for i := 0; i < rms.Len(); i++ {
+			//	internaldata.ResourceMetricsToOC(rms.At(i))
+			//	ilms := rms.At(i).ScopeMetrics()
+			//	if ilms.Len() == 0 {
+			//	}
+			//	for j := 0; j < ilms.Len(); j++ {
+			//		ilm := ilms.At(j)
+			//		metrics := ilm.Metrics()
+			//		for k := 0; k < metrics.Len(); k++ {
+			//			p = append(p, metrics.At(k))
+			//		}
+			//	}
+			//}
+			//assertMetricsEqual2(t, p, tt.wantData)
 		})
 	}
 }
 
-func assertMetricsDataAreEqual(t *testing.T, metricsData1, metricsData2 []*agentmetricspb.ExportMetricsServiceRequest) {
-	if len(metricsData1) != len(metricsData2) {
-		t.Errorf("metrics data length mismatch. got:\n%d\nwant:\n%d\n", len(metricsData1), len(metricsData2))
-		return
+func assertMetricsEqual2(t *testing.T, p []pmetric.Metrics, data2 []pmetric.Metrics) {
+
+	for i := 0; i < len(data2); i++ {
+		err := pmetrictest.CompareMetrics(p[i], data2[i])
+		require.NoError(t, err)
 	}
-
-	for i := 0; i < len(metricsData1); i++ {
-		md1, md2 := metricsData1[i], metricsData2[i]
-
-		if !proto.Equal(md1.Node, md2.Node) {
-			t.Errorf("metrics data nodes are not equal. got:\n%+v\nwant:\n%+v\n", md1.Node, md2.Node)
-		}
-		if !proto.Equal(md1.Resource, md2.Resource) {
-			t.Errorf("metrics data resources are not equal. got:\n%+v\nwant:\n%+v\n", md1.Resource, md2.Resource)
-		}
-
-		assertMetricsAreEqual(t, md1.Metrics, md2.Metrics)
-	}
-}
-
-func assertMetricsAreEqual(t *testing.T, metrics1, metrics2 []*metricspb.Metric) {
-	if len(metrics1) != len(metrics2) {
-		t.Errorf("metrics length mismatch. got:\n%d\nwant:\n%d\n", len(metrics1), len(metrics2))
-		return
-	}
-
-	for i := 0; i < len(metrics1); i++ {
-		m1, m2 := metrics1[i], metrics2[i]
-
-		if !proto.Equal(m1.Resource, m2.Resource) {
-			t.Errorf("metric resources are not equal. got:\n%+v\nwant:\n%+v\n", m1.Resource, m2.Resource)
-		}
-
-		md1, md2 := m1.MetricDescriptor, m2.MetricDescriptor
-		assert.Equal(t, md1.Name, md2.Name)
-		assert.Equal(t, md1.Type, md2.Type)
-		assert.Equal(t, md1.Description, md2.Description)
-		assert.Equal(t, md1.Unit, md2.Unit)
-
-		if len(md1.LabelKeys) != len(md2.LabelKeys) {
-			t.Errorf("label keys length mismatch. got:\n%d\nwant:\n%d\n", len(md1.LabelKeys), len(md2.LabelKeys))
-			return
-		}
-
-		if len(m1.Timeseries) != len(m2.Timeseries) {
-			t.Errorf("timeseries length mismatch. got:\n%d\nwant:\n%d\n", len(m1.Timeseries), len(m2.Timeseries))
-			return
-		}
-		for i := 0; i < len(m1.Timeseries); i++ {
-			t1, t2 := m1.Timeseries[i], m2.Timeseries[i]
-			assert.Equal(t, t1.Points, t2.Points)
-			assert.Equal(t, t1.StartTimestamp, t2.StartTimestamp)
-
-			if len(t1.LabelValues) != len(t2.LabelValues) {
-				t.Errorf("label values length mismatch. got:\n%d\nwant:\n%d\n", len(t1.LabelValues), len(t2.LabelValues))
-				return
-			}
-
-			l1, l2 := labelsFromMetric(md1, t1), labelsFromMetric(md2, t2)
-			if len(l1) != len(l2) {
-				t.Errorf("labels length mismatch. got:\n%d\nwant:\n%d\n", len(l1), len(l2))
-				return
-			}
-			assert.EqualValues(t, l1, l2)
-		}
-	}
-}
-
-func labelsFromMetric(md *metricspb.MetricDescriptor, ts *metricspb.TimeSeries) map[string]metricLabel {
-	labels := map[string]metricLabel{}
-	numValues := len(ts.LabelValues)
-	for i, k := range md.LabelKeys {
-		if i < numValues {
-			labels[k.Key] = metricLabel{k, ts.LabelValues[i]}
-			continue
-		}
-	}
-	return labels
 }

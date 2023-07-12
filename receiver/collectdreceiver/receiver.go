@@ -8,18 +8,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go.opentelemetry.io/collector/pdata/pmetric"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
-	metricspb "github.com/census-instrumentation/opencensus-proto/gen-go/metrics/v1"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/receiver"
 	"go.uber.org/zap"
-
-	internaldata "github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/opencensus"
 )
 
 var _ receiver.Metrics = (*collectdReceiver)(nil)
@@ -99,17 +97,18 @@ func (cdr *collectdReceiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	defaultAttrs := cdr.defaultAttributes(r)
 
-	var metrics []*metricspb.Metric
+	metrics := pmetric.NewMetrics()
+	sm := metrics.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty()
 	ctx := context.Background()
 	for _, record := range records {
-		metrics, err = record.appendToMetrics(metrics, defaultAttrs)
+		err = record.appendToMetrics(sm, defaultAttrs)
 		if err != nil {
 			cdr.handleHTTPErr(w, err, "unable to process metrics")
 			return
 		}
 	}
 
-	err = cdr.nextConsumer.ConsumeMetrics(ctx, internaldata.OCToMetrics(nil, nil, metrics))
+	err = cdr.nextConsumer.ConsumeMetrics(ctx, metrics)
 	if err != nil {
 		cdr.handleHTTPErr(w, err, "unable to process metrics")
 		return
