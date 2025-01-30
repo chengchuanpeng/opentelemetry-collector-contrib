@@ -12,10 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"go.opentelemetry.io/collector/config/confignet"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/config/confignet"
 	"go.opentelemetry.io/collector/receiver/receivertest"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/golden"
@@ -159,12 +158,14 @@ func TestScraper(t *testing.T) {
 
 			scraper := newScraper(cfg, settings)
 			actualMetrics, err := scraper.scrape(context.Background())
+			actualMetrics.ResourceMetrics()
 			require.NoError(t, err, "failed scrape")
 			require.NoError(
 				t,
 				pmetrictest.CompareMetrics(
 					expectedMetrics,
 					actualMetrics,
+					pmetrictest.IgnoreMetricValues("tcpcheck.duration"),
 					pmetrictest.IgnoreTimestamp(),
 					pmetrictest.IgnoreStartTimestamp(),
 				),

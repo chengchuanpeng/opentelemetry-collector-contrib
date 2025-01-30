@@ -4,17 +4,15 @@ package tcpcheckreceiver // import "github.com/open-telemetry/opentelemetry-coll
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
-	"go.opentelemetry.io/collector/config/confignet"
-	"go.uber.org/zap"
-
 	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/config/confignet"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/receiver"
+	"go.uber.org/zap"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/tcpcheckreceiver/internal/metadata"
 )
@@ -33,7 +31,6 @@ type TCPConnectionState struct {
 }
 
 func getConnectionState(tcpConfig *confignet.TCPAddrConfig) (TCPConnectionState, error) {
-	fmt.Println(tcpConfig.Endpoint, tcpConfig.DialerConfig)
 	conn, err := tcpConfig.Dial(context.Background())
 	if err != nil {
 		return TCPConnectionState{}, err
@@ -70,7 +67,6 @@ func (s *scraper) scrapeEndpoint(tcpConfig *confignet.TCPAddrConfig, wg *sync.Wa
 	// Record success data points
 	s.mb.RecordTcpcheckDurationDataPoint(now, duration, tcpConfig.Endpoint)
 	s.mb.RecordTcpcheckStatusDataPoint(now, pointValue, tcpConfig.Endpoint)
-	return
 }
 
 func (s *scraper) scrape(_ context.Context) (pmetric.Metrics, error) {

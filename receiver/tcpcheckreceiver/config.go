@@ -11,11 +11,10 @@ import (
 	"strings"
 
 	"go.opentelemetry.io/collector/config/confignet"
-
-	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/tcpcheckreceiver/internal/metadata"
-
 	"go.opentelemetry.io/collector/receiver/scraperhelper"
 	"go.uber.org/multierr"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/tcpcheckreceiver/internal/metadata"
 )
 
 // Predefined error responses for configuration validation failures
@@ -29,7 +28,7 @@ var (
 type Config struct {
 	scraperhelper.ControllerConfig `mapstructure:",squash"`
 	metadata.MetricsBuilderConfig  `mapstructure:",squash"`
-	Targets                        []*confignet.TCPAddrConfig `mapstructure:",squash"`
+	Targets                        []*confignet.TCPAddrConfig `mapstructure:",targets"`
 }
 
 func validatePort(port string) error {
