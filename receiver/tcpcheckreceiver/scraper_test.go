@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/config/confignet"
+	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/receiver/receivertest"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/golden"
@@ -196,6 +198,11 @@ func TestScraper_TCPErrorMetrics(t *testing.T) {
 			expectedMetrics, err := golden.ReadMetrics(expectedFile)
 			require.NoError(t, err)
 
+			if runtime.GOOS == "windows" {
+				expectedError := "dial tcp 127.0.0.1:9999: connectex: No connection could be made because the target machine actively refused it."
+				expectedMetrics = updateErrorCodeInMetrics(expectedMetrics, expectedError)
+			}
+
 			cfg := &Config{
 				Targets: []*confignet.TCPAddrConfig{
 					{
@@ -225,4 +232,13 @@ func TestScraper_TCPErrorMetrics(t *testing.T) {
 			)
 		})
 	}
+}
+
+func updateErrorCodeInMetrics(metrics pmetric.Metrics, newErrorCode string) pmetric.Metrics {
+	metrics.ResourceMetrics().At(0).
+		ScopeMetrics().At(0).
+		Metrics().At(0).
+		Sum().DataPoints().At(0).
+		Attributes().PutStr("error.code", newErrorCode)
+	return metrics
 }
